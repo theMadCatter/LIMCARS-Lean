@@ -77,6 +77,28 @@ python3 -m app          # → http://localhost:8951
 - 🛰️ **Live engine detection** scans GPU compute apps, listening ports and
   process groups, so stray engines show up with their own Stop button.
 
+### 📡 Status tiles (optional)
+Pin ancillary services (image gen, TTS, LiteLLM proxy, anything that
+answers HTTP) to the sidebar for a quick up/down glance. Add to
+`data/config.json`:
+
+```json
+"status_tiles": [
+  {"id": "comfyui", "type": "comfyui", "label": "ComfyUI",
+   "url": "http://127.0.0.1:8188"},
+  {"id": "kokoro",  "type": "http",   "label": "Kokoro TTS",
+   "url": "http://127.0.0.1:8880/health"},
+  {"id": "litellm", "type": "http",   "label": "LiteLLM",
+   "url": "http://127.0.0.1:4000/health",
+   "api_key_env": "LITELLM_MASTER_KEY"}
+],
+"status_tiles_interval_s": 15
+```
+
+Supported types: `comfyui` (polls `/queue` + `/system_stats`,
+surfaces queue counts and VRAM free/total), and `http` (generic
+health probe, matches an `ok_status` list — default `[200]`).
+
 ### 🕵️ Hermes Traces (bonus)
 If [Hermes Agent](https://hermes-agent.nousresearch.com) sessions live on your
 box, LIMCARS doubles as a two-pane live browser of agent & subagent

@@ -6,8 +6,8 @@
 <title>🏎️ LIMCARS — Local Inference Monitor · Cost Analyzer · Recipe Server</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
-<link rel="stylesheet" href="/css/style.css?v=20261026l">
-<link rel="stylesheet" href="/css/dashboard.css?v=20261026l">
+<link rel="stylesheet" href="/css/style.css?v=20261026n">
+<link rel="stylesheet" href="/css/dashboard.css?v=20261026n">
 </head>
 <body>
 <header class="top">
@@ -72,6 +72,10 @@
     <div class="side-sec" id="sec-security">
     <div id="auth-status" class="small muted">checking…</div>
     <button class="pill" id="btn-auth" style="width:100%;margin-top:6px">Set password</button>
+    </div>
+    <button class="side-h side-toggle" data-sec="status" aria-expanded="true" aria-controls="sec-status" style="margin-top:14px">📡 Status tiles</button>
+    <div class="side-sec" id="sec-status">
+    <div id="status-tiles"><span class="muted small">(none configured — add <code>status_tiles</code> to data/config.json)</span></div>
     </div>
     <button class="side-h side-toggle" data-sec="recipes" aria-expanded="true" aria-controls="sec-recipes" style="margin-top:14px">🧾 Recipes</button>
     <div class="side-sec" id="sec-recipes">
@@ -156,6 +160,6 @@
   </main>
 </div>
 
-<script type="module" src="/js/dashboard.js?v=20261026l"></script>
+<script type="module" src="/js/dashboard.js?v=20261026n"></script>
 </body>
 </html>

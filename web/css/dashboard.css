@@ -95,6 +95,7 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 .rec-name { font-weight: 600; font-size: 13px; }
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5568; flex: none; }
 .rec-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(52,211,153,.55); }
+.rec-dot.err { background: #ff6b6b; box-shadow: 0 0 6px rgba(255,107,107,.55); }
 .rec-sub { margin: 2px 0 6px 15px; }
 .rec-btns { display: flex; gap: 6px; }
 .btn.tiny { padding: 3px 14px; font-size: 12px; width: auto; }

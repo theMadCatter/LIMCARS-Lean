@@ -140,6 +140,12 @@ class Limcars:
         from .clients import ClientSampler
         self.clients = ClientSampler(self.broker)
         self.clients.start()
+        from .status_tiles import StatusTileSampler
+        # Optional status tiles for ancillary services (ComfyUI, Kokoro
+        # TTS, LiteLLM proxy, …). Thread stays idle when
+        # cfg["status_tiles"] is empty, so this is free when unused.
+        self.status_tiles = StatusTileSampler(cfg)
+        self.status_tiles.start()
         self.settings = _Settings(cfg.get("settings_path", "data/settings.json"))
         from .auth import AuthGate
         self.auth = AuthGate(cfg.get("auth_path") or str(config.DATA / "auth.json"),
@@ -828,6 +834,14 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             return self._json({"engines": self.app.live_engines.scan(
                 force=(qs.get("refresh") == ["1"])), "at": time.time()})
+        m = re.fullmatch(r"/api/status-tiles/?", path)
+        if m:
+            # Status tiles are read-only observers of ancillary services
+            # (ComfyUI /queue, generic HTTP health, etc). The sampler is
+            # polling in the background — this endpoint just hands back
+            # the most recent snapshot.
+            return self._json({"tiles": self.app.status_tiles.snapshot(),
+                               "at": time.time()})
         return self._err(404, "not found")
 
     # ---------------- panel settings (old dash_settings.json parity) ----------------
@@ -1095,3 +1109,5 @@ def serve(cfg: dict) -> None:
         app.hw.stop()
         for n in app.nodes:
             n.stop()
+        if hasattr(app, "status_tiles"):
+            app.status_tiles.stop()

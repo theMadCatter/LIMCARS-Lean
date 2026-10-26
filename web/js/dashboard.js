@@ -1882,6 +1882,72 @@ document.querySelector('#btn-recipes-manage').onclick = async () => {
 loadRecipes();
 setInterval(loadRecipes, 5000);
 
+/* ============ Status tiles (ComfyUI, generic HTTP health, …) ============
+ * The server polls each tile on its own interval and we just render the
+ * most recent snapshot. Empty-config installs show a muted hint instead
+ * of an empty box, so a brand new user understands what the section is
+ * for. */
+
+function _fmtAge(t) {
+  if (!t) return '';
+  const s = Math.max(0, (Date.now() / 1000) - t);
+  if (s < 10) return 'now';
+  if (s < 60) return Math.round(s) + ' s ago';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  return Math.round(s / 3600) + ' h ago';
+}
+
+function _tileDetail(t) {
+  const info = t.info || {};
+  if (t.type === 'comfyui') {
+    const parts = [];
+    if ('running' in info || 'pending' in info) {
+      parts.push(`queue ${info.running ?? 0}▶ ${info.pending ?? 0}•`);
+    }
+    const free = info.vram_free ?? info.torch_vram_free;
+    const total = info.vram_total ?? info.torch_vram_total;
+    if (free != null && total != null && total > 0) {
+      const used = total - free;
+      parts.push(`vram ${(used / 1024 / 1024 / 1024).toFixed(1)}/${(total / 1024 / 1024 / 1024).toFixed(1)} GB`);
+    }
+    if (info.version) parts.push('v' + info.version);
+    return parts.join(' · ');
+  }
+  // generic http tile — surface the status code + any short summary
+  const bits = [];
+  if (info.status) bits.push('HTTP ' + info.status);
+  if (info.summary != null) {
+    const s = typeof info.summary === 'string'
+      ? info.summary.slice(0, 60)
+      : Object.entries(info.summary).map(([k, v]) => `${k}=${v}`).join(' ');
+    if (s) bits.push(s);
+  }
+  return bits.join(' · ');
+}
+
+async function loadStatusTiles() {
+  const host = document.querySelector('#status-tiles');
+  if (!host) return;
+  let r;
+  try { r = await (await fetch('/api/status-tiles')).json(); }
+  catch { return; }
+  const tiles = r && r.tiles ? r.tiles : [];
+  if (!tiles.length) return;   // keep the placeholder hint from dashboard.html
+  host.innerHTML = tiles.map(t => {
+    const dot = t.up === true ? ' on' : (t.up === false ? ' err' : '');
+    const latency = t.latency_ms != null ? ` · ${Math.round(t.latency_ms)} ms` : '';
+    const err = t.error ? ` · <span class="small" style="color:#ff8574">${escH(t.error)}</span>` : '';
+    const detail = _tileDetail(t);
+    return `<div class="rec-row" data-id="${escH(t.id)}">
+      <div class="rec-top"><span class="rec-dot${dot}"></span>
+        <span class="rec-name">${escH(t.label)}</span></div>
+      <div class="rec-sub muted small">${escH(detail)}${latency}${err} · ${_fmtAge(t.checked_at)}</div>
+    </div>`;
+  }).join('');
+}
+loadStatusTiles();
+setInterval(loadStatusTiles, 10000);
+
 /* ============ Live engines (detected on the box) ============ */
 
 const ENG_ICONS = { 'vLLM': '🔴', 'SGLang': '🐍', 'llama.cpp': '🦙',

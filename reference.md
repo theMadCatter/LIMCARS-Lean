@@ -71,7 +71,8 @@ picking up this task start here before anything else.
 |---|---|---|---|
 | #1 | `cursor/secure-by-default-01a8` | **merged** as `941b36a` | security hardening + login UI + systemd fix + tests |
 | #2 | `cursor/engine-auth-headers-01a8` | **merged** as `569e5c3` | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
-| #3 | `cursor/vllm-older-compat-01a8` | rebased onto post-#2 main (bottom of the stack) | fallback metric names so vLLM 0.4/0.5 still populates KV + spec-decode; tests |
+| #3 | `cursor/vllm-older-compat-01a8` | rebased onto post-#2 main (bottom of stack) | fallback metric names so vLLM 0.4/0.5 still populates KV + spec-decode; tests |
+| #4 | `cursor/http-status-tiles-01a8` | stacked on #3 | status tiles for ComfyUI (queue + system_stats) and generic HTTP health; sidebar section; tests |
 
 ## Findings since the security pass
 
@@ -96,6 +97,18 @@ picking up this task start here before anything else.
   `engine_info.info()` — which now ALSO carries the per-engine auth
   headers merged in PR #2 to each /metrics / /v1/models / /version
   call (rebase integration).
+- **F-12 no at-a-glance view for ancillary services** — Chief runs
+  ComfyUI, Kokoro TTS, LiteLLM proxy alongside the inference engine
+  and nothing in the dashboard shows whether they are up. Added a
+  `status_tiles` config, a background sampler
+  (`app/status_tiles.py`), the `/api/status-tiles` endpoint and a
+  sidebar section rendering per-tile status + per-type extras
+  (ComfyUI queue counts and VRAM free/total; HTTP status for generic
+  tiles). Tiles are READ-ONLY observers — they're not subject to the
+  `allow_exec` gate — but `/api/status-tiles` still rides the main
+  `_authorized()` gate, so an unauthenticated LAN client can't scan
+  the owner's ancillary services. Thread stays idle when
+  `status_tiles` is empty.
 
 ## Work plan
 
