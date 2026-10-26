@@ -44,10 +44,12 @@ const BUBS = {
       sparkFmt: v => (v / 1000).toFixed(2) + ' s',
       main: l => sec(e2eHourNum(l) != null ? e2eHourNum(l) : histNum(l, 'e2e')),
       sub: l => `${e2eHourBasis(l)} · now ${sec(histNum(l, 'e2e'))} · lifetime ${sec(l.e2e_life_avg_ms)}` },
-    { label: 'Spec acceptance', series: 'spec_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
+    { label: 'Spec acceptance', series: 'spec_accept_pct', seriesAlt: 'spec_step_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
       sparkFmt: v => v.toFixed(1) + ' %',
-      main: l => pct(l.spec_accept_pct),
-      sub: l => `accept len ${l.spec_accept_len != null ? l.spec_accept_len.toFixed(2) : '–'} tok · `
+      main: l => pct(l.spec_accept_pct ?? l.spec_step_accept_pct),
+      sub: l => l.spec_accept_pct == null && l.spec_step_accept_pct != null
+        ? 'of verify steps accepted ≥1 draft · engine reports steps, not tokens'
+        : `accept len ${l.spec_accept_len != null ? l.spec_accept_len.toFixed(2) : '–'} tok · `
               + `${l.draft_tok_per_step != null ? l.draft_tok_per_step.toFixed(1) : '–'} draft tok/step · DFlash` },
     { label: 'Prefix cache hit', series: 'cache_hit_pct', tip: 'Share of prompt tokens served from the prefix cache — median over the last hour. Cached tokens are a subset of prompt tokens, never added on top.', life: true, color: () => COLORS.teal,
       sparkFmt: v => v.toFixed(1) + ' %',
@@ -537,7 +539,15 @@ function refresh() {
               { times: rows.map(r => r[0]), fmt: sfmt });
       } else {
         const now = Date.now() / 1000;
-        let rows = state.store.at(`${eng()}.${ref.d.series}`).filter(([t]) => t >= now - 3600);
+        const hour = k => state.store.at(`${eng()}.${k}`).filter(([t]) => t >= now - 3600);
+        const has = rs => rs.some(([, v]) => v != null);
+        let rows = hour(ref.d.series);
+        // engines without the token-level series (Atlas) chart the step-level
+        // one — chosen by which series holds history, so idle gaps keep it
+        if (ref.d.seriesAlt && !has(rows)) {
+          const alt = hour(ref.d.seriesAlt);
+          if (has(alt)) rows = alt;
+        }
         const step = Math.max(1, Math.ceil(rows.length / 200));
         rows = rows.filter((_, i) => i % step === 0 || i === rows.length - 1);
         spark(ref.sp, rows.map(r => r[1]), ref.d.color,
@@ -800,7 +810,7 @@ async function connect() {
           if (e.meta) { e.meta.latest = o; e.meta.alive = true; }
           for (const k of ['prefill_tps_now','decode_tps_now','prefill_tps_avg','decode_tps_avg',
                            'running','waiting','kv_pct','ttft_p50_ms','itl_p50_ms','queue_time_p50_ms',
-                           'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_accept_len',
+                           'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_step_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
         } else if (ev === 'events' && o.type === 'node_down') {

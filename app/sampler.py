@@ -49,7 +49,7 @@ SERIES_KEYS = ("prefill_tps_now", "decode_tps_now", "prefill_tps_avg",
                "kv_pool_tokens", "kv_used_tokens", "kv_free_tokens",
                "ttft_p50_ms", "itl_p50_ms", "queue_time_p50_ms", "e2e_p50_ms",
                "cache_hit_pct", "cache_hit_life_pct",
-               "spec_accept_pct", "spec_accept_len", "draft_tok_per_step",
+               "spec_accept_pct", "spec_step_accept_pct", "spec_accept_len", "draft_tok_per_step",
                "prompt_total", "gen_total", "gen_peak", "requests_total",
                "savings_day", "savings_month", "savings_year",
                "e2e_med_1h", "e2e_life_avg_ms")
@@ -231,7 +231,7 @@ class EngineSampler(threading.Thread):
                 row[key] = None if (key == "prefill_tps_now"
                                     and v > PREFILL_MAX) else v
             self._win_delta(logical, cur, old, now, dt)
-        for logical in ("drafts", "draft_tokens", "accepted_tokens",
+        for logical in ("drafts", "draft_tokens", "accepted_tokens", "spec_steps_ok", "spec_steps",
                         "prefix_hits", "prefix_queries",
                         "prefill_tokens", "prefill_seconds"):
             self._win_delta(logical, counters.get(logical), prev.get(logical), now, dt)
@@ -267,6 +267,8 @@ class EngineSampler(threading.Thread):
         row["decode_tps_avg"] = self._win_rate("gen_tokens")
         row["cache_hit_pct"] = self._win_ratio("prefix_hits", "prefix_queries", scale=100.0)
         row["spec_accept_pct"] = self._win_ratio("accepted_tokens", "draft_tokens", scale=100.0)
+        # step-level acceptance (Atlas): share of verify steps accepting >=1 draft
+        row["spec_step_accept_pct"] = self._win_ratio("spec_steps_ok", "spec_steps", scale=100.0)
 
         # --- histogram window quantiles ---
         self._hist_snapshot(now, hists)
