@@ -75,7 +75,7 @@ class NodeSampler(threading.Thread):
         return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
                 "-o", "ServerAliveInterval=5", "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={self._ctl}", "-o", "ControlPersist=60",
-                *self.extra, self.target, "sh", "-s"]
+                *self.extra, "--", self.target, "sh", "-s"]
 
     def snapshot(self, seconds: float | None = None) -> dict:
         rows = self.ring.all() if seconds is None else self.ring.window(seconds)
@@ -168,7 +168,9 @@ class NodeSampler(threading.Thread):
 def start_nodes(cfg: dict, broker) -> list[NodeSampler]:
     nodes = []
     for n in cfg.get("nodes") or []:
+        # a target starting with '-' would be parsed as an ssh option (-oProxyCommand=…)
         if not (isinstance(n, dict) and isinstance(n.get("ssh"), str)
+                and re.fullmatch(r"[^\s-][^\s]*", n["ssh"])
                 and NODE_ID_RE.fullmatch(str(n.get("id", "")))):
             print(f"[limcars-next] ignoring node entry {n!r}: needs id [A-Za-z0-9_-] and ssh")
             continue

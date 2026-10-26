@@ -3,7 +3,7 @@
 // Same reading order: sidebar system tiles + side charts, hero cards,
 // latency/live/spec/savings bubble rows, six-chart grid, model table.
 
-import { SeriesStore, LineChart, spark, fmt, COLORS } from './charts.js?v=20261023h';
+import { SeriesStore, LineChart, spark, fmt, COLORS } from './charts.js?v=20261026g';
 
 const state = {
   store: new SeriesStore(4000),
@@ -206,6 +206,7 @@ function ensureGpuCards() {
   if (sig === gpuSig || !ramCard) return;
   gpuSig = sig;
   document.querySelectorAll('.gpu-dyn').forEach(c => {
+    c._chart && c._chart.destroy();
     state.charts = state.charts.filter(x => x !== c); c.remove(); });
   let after = ramCard;
   const add = (id, title, series, fmtFn, opts) => {

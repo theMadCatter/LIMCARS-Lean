@@ -68,3 +68,10 @@ def test_counter_reset_gives_no_rate_not_negative():
 def test_ssh_argv_never_prompts():
     a = _node().argv()
     assert a[0] == "ssh" and "BatchMode=yes" in a and a[-3:] == ["u@h", "sh", "-s"]
+
+
+def test_option_like_ssh_target_is_rejected():
+    from app.nodes import start_nodes
+    assert start_nodes({"nodes": [{"id": "x", "ssh": "-oProxyCommand=touch /tmp/pwn"},
+                                  {"id": "y", "ssh": "a b"}]}, _B()) == []
+    assert "--" in _node().argv()

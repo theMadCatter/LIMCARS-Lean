@@ -640,11 +640,13 @@ class Handler(BaseHTTPRequestHandler):
                    | {n.topic for n in self.app.nodes})
         bad = [t for t in wanted
                if not _TOPIC_RE.fullmatch(t) or t not in allowed]
-        if len(wanted) > 32 or bad:
+        if len(wanted) > max(32, len(allowed)) or bad:   # big clusters: one topic per node
             return self._err(400, "bad topics")
         # Subscribe to what the broker already carries; a valid topic that has
         # simply not published yet is created on subscribe rather than punished.
-        wanted = {t for t in wanted if t in known} or (wanted & allowed)
+        # every requested topic passed the allowlist; keep them all (a node that
+        # has not published yet must still stream once its first SSH poll lands)
+        wanted &= allowed
         last = self.headers.get("Last-Event-ID")  # "topic:seq"
         since: dict[str, int] = {}
         if last:

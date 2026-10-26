@@ -90,7 +90,7 @@ def _gpu_row(gpus: list[dict]) -> dict:
             for k in ("util", "temp_c", "power_w", "clock_mhz", "mem_used_gb", "mem_total_gb"):
                 if g[k] is not None:
                     row[f"gpu{i}_{k}"] = g[k]
-            if g["mem_total_gb"]:
+            if g["mem_total_gb"] and g["mem_used_gb"] is not None:
                 row[f"gpu{i}_mem_pct"] = round(100 * g["mem_used_gb"] / g["mem_total_gb"], 1)
     return row
 
