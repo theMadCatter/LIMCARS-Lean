@@ -451,7 +451,45 @@ function refresh() {
   document.querySelector('#engine-dot').className = 'dot ' + (meta.alive ? 'up' : 'down');
   document.querySelector('#engine-name').textContent = `${meta.model || meta.kind || '–'} @ ${meta.url || ''}`;
   document.querySelector('#engine-caret').hidden = Object.keys(state.engines).length < 2;
+  updateTabStatus(meta);
   renderModelTable();
+}
+
+// Selected engine as this tab sees it: 'down' = stream dropped or engine
+// unreachable, 'stale' = no fresh row for STALE_AFTER_S (sampler ticks at 2 Hz).
+// state.connected stays undefined until the first stream attempt settles.
+const STALE_AFTER_S = 10;
+function engineHealth() {
+  const e = state.engines[eng()] || {};
+  const age = e.rx ? (Date.now() - e.rx) / 1000 : null;
+  if (state.connected === false) return { st: 'down', why: 'stream', age };
+  if (e.meta && e.meta.alive === false) return { st: 'down', why: 'engine', age };
+  if (state.connected && (age == null || age > STALE_AFTER_S)) return { st: 'stale', why: 'quiet', age };
+  return { st: 'up', age };
+}
+
+// Tab title carries live decode speed; the favicon gains a status dot only
+// when something is wrong, so a background tab still tells the truth.
+const favLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+const favHref = favLink ? favLink.getAttribute('href') : null;
+let favSvg = null, favState = 'up';
+if (favHref) fetch(favHref).then(r => r.text()).then(t => { favSvg = t; }).catch(() => {});
+function updateTabStatus(meta) {
+  const { st } = engineHealth();
+  const l = latest();
+  const model = String(meta.model || meta.id || '').split('/').pop();
+  const speed = st === 'up' && _fin(l.decode_tps_now) && l.decode_tps_now > 0
+    ? Math.round(l.decode_tps_now).toLocaleString('en-US') + ' tok/s · ' : '';
+  const title = (st === 'up' ? '' : st === 'stale' ? '⏸ ' : '⚠ ') + speed +
+    (model ? model + ' — ' : '') + 'LIMCARS';
+  if (document.title !== title) document.title = title;
+  if (!favLink || !favSvg || st === favState) return;
+  favState = st;
+  if (st === 'up') { favLink.setAttribute('href', favHref); return; }
+  const col = st === 'stale' ? '#facc15' : '#fb7185';
+  const svg = favSvg.replace('</svg>',
+    `<circle cx="50" cy="14" r="12" fill="${col}" stroke="#0b0e13" stroke-width="3"/></svg>`);
+  favLink.setAttribute('href', 'data:image/svg+xml,' + encodeURIComponent(svg));
 }
 
 function renderModelTable(force) {
@@ -503,7 +541,8 @@ async function seed(reseedWindow = true) {
   const snap = await r.json();
   state.engines = {};
   for (const [id, e] of Object.entries(snap.engines || {})) {
-    state.engines[id] = { meta: e, latest: e.latest || {} };
+    state.engines[id] = { meta: e, latest: e.latest || {},
+      rx: e.last_scrape ? Date.now() - Math.max(0, (snap.ts || 0) - e.last_scrape) * 1000 : 0 };
     for (const [k, rows] of Object.entries(e.series || {})) state.store.seed(`${id}.${k}`, rows);
     // e2e/queue p50 series aren't in snapshot series list — seed from ring rows missing: skip, SSE fills in
   }
@@ -563,6 +602,7 @@ async function connect() {
     // audit: pill used to glow 'live 2 Hz' on response headers alone
     document.querySelector('#conn-dot').className = 'dot up';
     document.querySelector('#conn-txt').textContent = 'live 2 Hz';
+    state.connected = true;
     const reader = res.body.getReader(); const dec = new TextDecoder();
     let buf = '';
     while (true) {
@@ -593,12 +633,16 @@ async function connect() {
         } else if (ev.startsWith('engine:')) {
           const id_ = ev.slice(7);
           const e = state.engines[id_]; if (!e) continue;
-          e.latest = o; if (e.meta) e.meta.latest = o;
+          e.latest = o; e.rx = Date.now();
+          if (e.meta) { e.meta.latest = o; e.meta.alive = true; }
           for (const k of ['prefill_tps_now','decode_tps_now','prefill_tps_avg','decode_tps_avg',
                            'running','waiting','kv_pct','ttft_p50_ms','itl_p50_ms','queue_time_p50_ms',
                            'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
+        } else if (ev === 'events' && o.type === 'engine_down') {
+          const e = state.engines[o.engine];
+          if (e && e.meta) e.meta.alive = false;
         } else if (ev === 'requests') {
           state.reqFeed.unshift(o); if (state.reqFeed.length > 50) state.reqFeed.pop();
           renderFeed();
@@ -606,6 +650,7 @@ async function connect() {
       }
     }
   } catch { /* fall through */ }
+  state.connected = false;
   document.querySelector('#conn-dot').className = 'dot down';
   document.querySelector('#conn-txt').textContent = 'reconnecting…';
   // self-heal: re-pull snapshot rings so engine latest/bubbles never sit
