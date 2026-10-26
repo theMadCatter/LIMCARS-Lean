@@ -66,6 +66,7 @@ _EXEC_WRITE_RE = (
 # server-side persisted, shared across all browsers.
 SETTINGS_DEFAULTS = {
     "bubbles_main": True,       # the ordered main bubble strip
+    "bubbles_prefill": True,    # dedicated Prefill tile strip (new 2026-10)
     "bubbles_live": True,       # (legacy keys kept harmless)
     "bubbles_latency": True,
     "bubbles_spec": True,

@@ -46,6 +46,22 @@ _HIST_KEYS = {lg: (f"{lg}_p50_ms", f"{lg}_avg_ms", f"{lg}_n",
                    f"{lg}_p50_1h_ms", f"{lg}_avg_1h_ms", f"{lg}_n_1h")
               for lg in _HIST_LOGICALS}
 SERIES_KEYS = ("prefill_tps_now", "decode_tps_now", "prefill_tps_avg",
+               # `prefill_tps_eff` = Δprompt_tokens / Δprefill_time_sum, i.e.
+               # the SAME ratio as prefill_tps_avg but WITHOUT subtracting
+               # cache hits from the numerator. On a cache-friendly workload
+               # the two diverge by whatever share the prefix cache saves —
+               # on the owner's TP4 V100 qwen3 run, ~340 uncached vs ~1009
+               # effective tok/s (66 % cache hit rate). Both are kept so the
+               # UI can show the "what the user feels" number alongside the
+               # "what the GPU actually prefilled" number.
+               "prefill_tps_eff",
+               # Mean prefill time and TTFT per request (Δsum / Δcount of
+               # the respective histograms), surfaced here as their own
+               # series so the UI's Prefill tiles can carry sparklines.
+               # Already in the per-row dict via the generic hist loop;
+               # listing them here means the SSE stream and the ring both
+               # retain them under their own keys.
+               "prefill_time_avg_ms", "ttft_avg_ms",
                "decode_tps_avg", "running", "waiting", "kv_pct",
                "kv_pool_tokens", "kv_used_tokens", "kv_free_tokens",
                "ttft_p50_ms", "itl_p50_ms", "queue_time_p50_ms", "e2e_p50_ms",
@@ -248,6 +264,13 @@ class EngineSampler(threading.Thread):
         #     Δprompt_tokens / Δprefill_time_sum   over the window —
         # tokens actually spent per second the engine WAS prefilling.
         row["prefill_tps_avg"] = self._prefill_rate(now)
+        # EFFECTIVE prefill speed: Δprompt_tokens / Δprefill_time_sum —
+        # same denominator as prefill_tps_avg, but the numerator keeps
+        # cache hits in. Represents the per-second throughput the USER
+        # experiences (uncached prefill compute + instant cache replay),
+        # whereas prefill_tps_avg represents what the GPU actually
+        # prefilled. Both are honest; they describe different things.
+        row["prefill_tps_eff"] = self._prefill_rate_effective(now)
         # prefill activity. No metric advances per-tick *during* a prefill
         # (prefix queries charge once at admission; request_prefill_time and
         # prompt_tokens fire at completion; iteration hist only logs decode
@@ -781,6 +804,48 @@ class EngineSampler(threading.Thread):
             if v <= PREFILL_MAX:
                 return v
         return None
+
+    def _prefill_rate_effective(self, now: float) -> float | None:
+        """Effective prefill speed INCLUDING prefix-cache hits.
+
+        Formula: Δprompt_tokens_total / Δprefill_time_sum, anchored on the
+        prefill_time histogram so both sides of the ratio cover exactly the
+        same stretch of real time. This is the number the owner's reference
+        TP4 V100 qwen3 run reported ~1009 tok/s for, against ~340 tok/s
+        uncached — the ratio reflects the 66 % prefix-cache hit rate on
+        that workload.
+
+        Returns None (bubble shows '–') when:
+          * the engine does not expose request_prefill_time_seconds (same
+            branch as _prefill_rate's `base is None` guard);
+          * the anchor window has not yet accumulated a settle period —
+            otherwise a young sampler would invent a speed off two scrapes;
+          * the measured value is above the plausibility cap, which only
+            happens on counter resets we did not detect in time (the row
+            holds its last honest reading instead of flashing a spike).
+        """
+        base = self._hist_span_delta("prefill_time", self.prefill_win_s)
+        if base is None:
+            # Engines without the prefill_time histogram (llama.cpp,
+            # sglang, …) have no honest effective-speed equivalent —
+            # a Δprompt_tokens / Δwall-clock reading would conflate the
+            # queue depth into the number. Return None rather than lie.
+            return None
+        d_secs, _d_cnt, covered = base
+        if covered < min(self.prefill_win_s * 0.8, 30.0) or d_secs <= 0:
+            return None
+        pd = self._win_sum("prompt_tokens", since=now - covered)
+        if pd is None or pd <= 0:
+            return None
+        v = pd / d_secs
+        # EFFECTIVE rate includes cache hits, which can legitimately push
+        # the number far above GPU prefill throughput (cache replay is
+        # ~instant). Keep a generous ceiling so a workload with a 99 %
+        # cache hit rate still charts, but still refuse the obvious
+        # counter-reset artifact that is 10x the already-generous cap.
+        if v > PREFILL_MAX * 10:
+            return None
+        return v
 
 
 class EngineManager:

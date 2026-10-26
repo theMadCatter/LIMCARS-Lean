@@ -6,8 +6,8 @@
 <title>🏎️ LIMCARS — Local Inference Monitor · Cost Analyzer · Recipe Server</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
-<link rel="stylesheet" href="/css/style.css?v=20261026n">
-<link rel="stylesheet" href="/css/dashboard.css?v=20261026n">
+<link rel="stylesheet" href="/css/style.css?v=20261026o">
+<link rel="stylesheet" href="/css/dashboard.css?v=20261026o">
 </head>
 <body>
 <header class="top">
@@ -91,6 +91,15 @@
     <div class="cards hero" id="hero"></div>
 
     <div class="bub-group"><div class="cards" id="bub-main"></div></div>
+    <!--
+      Dedicated Prefill tile strip. Lives directly under the main bubbles
+      so the owner's "what's happening in prefill right now" question is
+      answered without scrolling. Hidden by the sidebar panel-settings
+      toggle `bubbles_prefill` (opt-out, same pattern as bub-main).
+    -->
+    <div class="bub-group"><h2 class="section">Prefill
+      <span class="muted small">· Δ over the prefill settle window</span></h2>
+      <div class="cards" id="bub-prefill"></div></div>
     <div class="bub-group"><h2 class="section">Projected savings <span id="pricing-note" class="muted small"></span>
       <button class="pill tiny" id="btn-pricing" style="margin-left:8px">edit</button></h2>
       <div id="pricing-edit" style="display:none" class="chart-card" style="margin-bottom:8px">
@@ -160,6 +169,6 @@
   </main>
 </div>
 
-<script type="module" src="/js/dashboard.js?v=20261026n"></script>
+<script type="module" src="/js/dashboard.js?v=20261026o"></script>
 </body>
 </html>

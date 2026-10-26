@@ -112,8 +112,14 @@ VLLM = {
         # prompt_tokens_cached_total is the authoritative figure;
         # prefix_cache_hits_total is the fallback for older builds (it is
         # block-rounded, so it can sit a hair above the true cached share).
+        # `gpu_prefix_cache_hits_total` is yet another name some vLLM
+        # builds expose when they also expose a separate `cpu_` cache;
+        # the plain name is the sum, but when it's missing we take the GPU
+        # one as the closest honest proxy.
         "cached_tokens": ["vllm:prompt_tokens_cached_total",
-                          "vllm:prefix_cache_hits_total"],
+                          "vllm:prefix_cache_hits_total",
+                          "vllm:gpu_prefix_cache_hits_total",
+                          "vllm:prefix_cache_hits"],
         "proc_start": "process_start_time_seconds",
         # iteration count moved from an iteration-count histogram
         # (`vllm:num_iterations_total_count`) to the current
@@ -121,8 +127,17 @@ VLLM = {
         # here: whichever one the engine actually exposes wins.
         "iterations": ["vllm:iteration_tokens_total_count",
                        "vllm:num_iterations_total_count"],
-        "prefix_queries": "vllm:prefix_cache_queries_total",
-        "prefix_hits": "vllm:prefix_cache_hits_total",
+        # Prefix-cache counters: the current names, the GPU-prefixed
+        # variants a few vLLM builds briefly used when they also exposed a
+        # separate `cpu_` cache, and the pre-`_total` names from the
+        # earliest Prometheus-ification pass. First-match-wins, so a
+        # modern install never double counts.
+        "prefix_queries": ["vllm:prefix_cache_queries_total",
+                           "vllm:gpu_prefix_cache_queries_total",
+                           "vllm:prefix_cache_queries"],
+        "prefix_hits": ["vllm:prefix_cache_hits_total",
+                        "vllm:gpu_prefix_cache_hits_total",
+                        "vllm:prefix_cache_hits"],
         "req_success": "vllm:request_success_total",
         # Speculative-decode counters were originally plain
         # `vllm:spec_decode_*` (0.4 era); the `_total` suffix came in with
