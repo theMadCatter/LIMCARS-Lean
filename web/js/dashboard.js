@@ -1175,7 +1175,9 @@ function rotateCategorical(arr, base, delta, aroundHue) {
   }
 }
 function applyTheme() {
-  const mode = uiPrefs.theme === 'light' ? 'light' : 'dark';
+  // explicit choice wins; until the user picks one, follow the OS setting
+  const mode = uiPrefs.theme === 'light' || uiPrefs.theme === 'dark' ? uiPrefs.theme
+    : (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
   document.documentElement.dataset.theme = mode;
   const base = PALETTES[uiPrefs.palette] || PALETTES.orange;
   const rs = document.documentElement.style;
@@ -1253,7 +1255,7 @@ function wireThemeUi() {
   const tb = document.getElementById('btn-theme');
   if (!tb) return;
   tb.addEventListener('click', () => {
-    const next = (uiPrefs.theme === 'light') ? 'dark' : 'light';
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     uiPrefs = writeUiPrefs({ theme: next });
     applyTheme();
   });
@@ -1320,6 +1322,9 @@ function wireThemeUi() {
 }
 applyTheme();
 wireThemeUi();
+if (window.matchMedia) matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (uiPrefs.theme !== 'light' && uiPrefs.theme !== 'dark') applyTheme();
+});
 (function wireHeaderTools() {
   const btn = document.getElementById('btn-tools'), box = document.getElementById('hdr-tools');
   if (!btn || !box) return;
