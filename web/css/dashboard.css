@@ -140,3 +140,6 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 .side-toggle[aria-expanded="false"]::after { content: " ▸"; }
 .side-sec { display: contents; }
 .side-sec.collapsed { display: none; }
+
+/* phones: wide tables scroll inside their card instead of widening the page */
+@media (max-width: 860px) { .main .chart-card { min-width: 0; overflow-x: auto; } }
