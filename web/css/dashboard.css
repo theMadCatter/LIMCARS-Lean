@@ -126,3 +126,8 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 
 /* bubble explanations (native title tooltip) */
 .bubble[title] .label, #bub-potential[title] .label { cursor: help; }
+
+/* pricing editor feedback */
+.pr-err { color: var(--rose); }
+#pricing-edit input[aria-invalid="true"] { border-color: var(--rose); }
+#pr-save:disabled { opacity: .5; cursor: not-allowed; }
