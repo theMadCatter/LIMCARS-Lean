@@ -131,3 +131,12 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 .pr-err { color: var(--rose); }
 #pricing-edit input[aria-invalid="true"] { border-color: var(--rose); }
 #pr-save:disabled { opacity: .5; cursor: not-allowed; }
+
+/* collapsible sidebar sections: display:contents keeps the expanded layout
+   identical to the flat original */
+.side-toggle { display: block; width: 100%; text-align: left; background: none; border: 0;
+  padding: 0; font-family: inherit; cursor: pointer; }
+.side-toggle::after { content: " ▾"; opacity: .6; }
+.side-toggle[aria-expanded="false"]::after { content: " ▸"; }
+.side-sec { display: contents; }
+.side-sec.collapsed { display: none; }

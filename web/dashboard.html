@@ -51,23 +51,31 @@
     <div class="chart-card side-chart"><div class="head"><span class="title">Unified RAM (GB) · last 3 min</span>
       <span class="cur" id="cur-ram"></span><button class="pill tiny autoy on">AUTO Y</button></div>
       <div id="sch-ram"></div></div>
-    <div class="side-h">⚙️ Panel settings</div>
+    <button class="side-h side-toggle" data-sec="settings" aria-expanded="true" aria-controls="sec-settings">⚙️ Panel settings</button>
+    <div class="side-sec" id="sec-settings">
     <div id="side-settings"></div>
     <div class="side-lbl">stats scope</div>
     <div id="side-scope" style="display:flex;gap:6px"></div>
+    </div>
     <button class="btn traces-btn" id="btn-traces" style="width:100%;margin-top:12px">🐝 Hermes Traces</button>
     <div class="probe-box">
       <button class="btn" id="btn-probe" style="width:100%">⚡ Ping engine</button>
       <div class="probe-out" id="probe-out">⚡ <span class="muted">one streamed request — real TTFT, prefill &amp; generation speed</span></div>
     </div>
-    <div class="side-h" style="margin-top:14px">🟢 Live engines</div>
+    <button class="side-h side-toggle" data-sec="engines" aria-expanded="true" aria-controls="sec-engines" style="margin-top:14px">🟢 Live engines</button>
+    <div class="side-sec" id="sec-engines">
     <div id="engine-list"><span class="muted small">scanning…</span></div>
-    <div class="side-h" style="margin-top:14px">🔒 Security</div>
+    </div>
+    <button class="side-h side-toggle" data-sec="security" aria-expanded="true" aria-controls="sec-security" style="margin-top:14px">🔒 Security</button>
+    <div class="side-sec" id="sec-security">
     <div id="auth-status" class="small muted">checking…</div>
     <button class="pill" id="btn-auth" style="width:100%;margin-top:6px">Set password</button>
-    <div class="side-h" style="margin-top:14px">🧾 Recipes</div>
+    </div>
+    <button class="side-h side-toggle" data-sec="recipes" aria-expanded="true" aria-controls="sec-recipes" style="margin-top:14px">🧾 Recipes</button>
+    <div class="side-sec" id="sec-recipes">
     <div id="recipe-list"><span class="muted small">loading…</span></div>
     <button class="btn" id="btn-recipes-manage" style="width:100%;margin-top:8px">⚙️ Manage recipes</button>
+    </div>
   </aside>
 
   <!-- MAIN -->

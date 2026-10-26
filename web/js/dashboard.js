@@ -1322,6 +1322,19 @@ function wireThemeUi() {
 }
 applyTheme();
 wireThemeUi();
+(function wireSideSections() {
+  document.querySelectorAll('.side-toggle').forEach(b => {
+    const sec = document.getElementById('sec-' + b.dataset.sec);
+    if (!sec) return;
+    const set = c => { sec.classList.toggle('collapsed', c); b.setAttribute('aria-expanded', String(!c)); };
+    set(!!(uiPrefs.collapsed || {})[b.dataset.sec]);
+    b.addEventListener('click', () => {
+      const c = !sec.classList.contains('collapsed');
+      set(c);
+      uiPrefs = writeUiPrefs({ collapsed: { ...(uiPrefs.collapsed || {}), [b.dataset.sec]: c } });
+    });
+  });
+})();
 if (window.matchMedia) matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
   if (uiPrefs.theme !== 'light' && uiPrefs.theme !== 'dark') applyTheme();
 });
