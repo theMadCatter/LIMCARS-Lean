@@ -419,11 +419,16 @@ class EngineSampler(threading.Thread):
             # serving while limcars was down/restarting — a fresh baseline
             # would permanently swallow that traffic (observed 9x undercount
             # of prompt tokens vs engine truth across a day of restarts).
+            # Signals the dialect no longer exposes (e.g. a mapping dropped in
+            # an upgrade) read 0 now: a saved value for them must not veto the
+            # restore of the real token baselines.
+            live = {k for k in base if counters.get(k) is not None}
             saved = self.store.get_counter_raw(self.id) if self.store else None
             if (saved and now - saved[0] < 86400
                     and all(float(saved[1].get(k, 0)) <= v + 1e-6
-                            for k, v in base.items())):
-                self._rate_prev = {k: float(saved[1].get(k, v)) for k, v in base.items()}
+                            for k, v in base.items() if k in live)):
+                self._rate_prev = {k: float(saved[1].get(k, v)) if k in live else v
+                                   for k, v in base.items()}
                 self._rate_prev_t = saved[0]
             else:
                 # First-ever tracking run: credit the engine's lifetime totals
