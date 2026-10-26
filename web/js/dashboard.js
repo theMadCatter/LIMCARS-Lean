@@ -44,7 +44,7 @@ const BUBS = {
       sparkFmt: v => (v / 1000).toFixed(2) + ' s',
       main: l => sec(e2eHourNum(l) != null ? e2eHourNum(l) : histNum(l, 'e2e')),
       sub: l => `${e2eHourBasis(l)} · now ${sec(histNum(l, 'e2e'))} · lifetime ${sec(l.e2e_life_avg_ms)}` },
-    { label: 'Spec acceptance', series: 'spec_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
+    { label: 'Spec acceptance', series: 'spec_accept_pct', seriesAlt: 'spec_step_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
       sparkFmt: v => v.toFixed(1) + ' %',
       main: l => pct(l.spec_accept_pct ?? l.spec_step_accept_pct),
       sub: l => l.spec_accept_pct == null && l.spec_step_accept_pct != null
@@ -539,7 +539,10 @@ function refresh() {
               { times: rows.map(r => r[0]), fmt: sfmt });
       } else {
         const now = Date.now() / 1000;
-        let rows = state.store.at(`${eng()}.${ref.d.series}`).filter(([t]) => t >= now - 3600);
+        // engines without the token-level series (Atlas) chart the step-level one
+        const key = ref.d.seriesAlt && l && l[ref.d.series] == null && l[ref.d.seriesAlt] != null
+          ? ref.d.seriesAlt : ref.d.series;
+        let rows = state.store.at(`${eng()}.${key}`).filter(([t]) => t >= now - 3600);
         const step = Math.max(1, Math.ceil(rows.length / 200));
         rows = rows.filter((_, i) => i % step === 0 || i === rows.length - 1);
         spark(ref.sp, rows.map(r => r[1]), ref.d.color,
@@ -802,7 +805,7 @@ async function connect() {
           if (e.meta) { e.meta.latest = o; e.meta.alive = true; }
           for (const k of ['prefill_tps_now','decode_tps_now','prefill_tps_avg','decode_tps_avg',
                            'running','waiting','kv_pct','ttft_p50_ms','itl_p50_ms','queue_time_p50_ms',
-                           'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_accept_len',
+                           'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_step_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
         } else if (ev === 'events' && o.type === 'node_down') {
