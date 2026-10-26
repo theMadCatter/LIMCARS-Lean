@@ -36,6 +36,7 @@ import time
 import urllib.request
 
 from . import dialects, prom
+from .http_client import engine_headers, make_request
 from .rings import Ring
 from .sse import Broker
 
@@ -164,8 +165,11 @@ class EngineSampler(threading.Thread):
                 self._stop.wait(sleep)
 
     def _fetch(self, path: str, timeout: float = 1.5) -> bytes:
-        req = urllib.request.Request(self.url + path,
-                                     headers={"User-Agent": "limcars-next/1.0"})
+        # Headers are rebuilt per call so a rotated api_key_env is picked up
+        # on the next tick without a daemon restart. The returned dict holds
+        # the Bearer / X-API-Key / etc. derived from the engine config; see
+        # http_client.engine_headers for the full contract.
+        req = make_request(self.url + path, headers=engine_headers(self.eng))
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — fixed http(s) url
             return r.read()
 

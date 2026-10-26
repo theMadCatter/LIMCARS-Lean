@@ -18,9 +18,15 @@ import json
 import time
 import urllib.request
 
+from .http_client import engine_headers
+
 
 def probe(url: str, model: str | None, max_tokens: int = 220,
-          prompt_words: int = 1300, timeout: float = 90.0) -> dict:
+          prompt_words: int = 1300, timeout: float = 90.0,
+          eng: dict | None = None) -> dict:
+    """`eng` carries per-engine auth headers (api_key / api_key_env /
+    headers). Kept optional so unit tests / existing callers that only
+    knew (url, model) continue to work."""
     nonce = f"{int(time.time())}-{int(time.time() * 1000) % 9973}-"
     prompt = nonce + " ".join(f"ocean{time.time_ns() % 99991}{i}"
                               for i in range(prompt_words))
@@ -33,10 +39,16 @@ def probe(url: str, model: str | None, max_tokens: int = 220,
         "stream": True,
         "stream_options": {"include_usage": True},
     }).encode()
+    hdrs = {"Content-Type": "application/json",
+            "User-Agent": "limcars-next-probe/1.0"}
+    # engine_headers() adds the Bearer / X-API-Key / custom headers from the
+    # engine config. User-Agent above is probe-specific (makes it easy to
+    # pick the probe traffic out of engine request logs) so we keep it
+    # and let engine_headers only augment anything missing.
+    hdrs.update({k: v for k, v in engine_headers(eng or {}).items()
+                 if k != "User-Agent"})
     req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions",
-                                 data=body,
-                                 headers={"Content-Type": "application/json",
-                                          "User-Agent": "limcars-next-probe/1.0"})
+                                 data=body, headers=hdrs)
     t0 = time.perf_counter()
     t_first = t_last = None
     usage = {}

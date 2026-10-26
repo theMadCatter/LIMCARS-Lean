@@ -132,6 +132,27 @@ one explicitly, edit `data/config.json`:
 { "engines": [ { "name": "MyModel", "url": "http://127.0.0.1:8000", "model": "org/model" } ] }
 ```
 
+### Engines behind an API key
+
+For a vLLM / LiteLLM / proxy that requires authentication, add any of:
+
+```json
+{
+  "engines": [{
+    "id": "v100-stack",
+    "url": "https://defiantic.local:8000",
+    "api_key_env": "VLLM_V100_KEY",     // preferred: look up at request time
+    "api_key": "sk-literal",             // or set the key inline
+    "auth_header": "Authorization",      // default; set to "X-API-Key" etc. for proxies
+    "headers": { "X-Trace-Id": "limcars" } // optional extra headers
+  }]
+}
+```
+
+The sampler, engine-info panel and the probe all attach these headers.
+Keys are never logged. `api_key_env` is recommended so the key stays out of
+`data/config.json` and rotates on the next sampler tick.
+
 Handy environment variables:
 
 | Variable | Default | Meaning |
