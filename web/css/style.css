@@ -62,9 +62,6 @@ header.top .brand .tagline { color: var(--muted, #8b93a7); font-weight: 400; fon
 }
 /* a phone genuinely needs two rows — that is the only place wrapping returns */
 @media (max-width: 860px) { header.top { flex-wrap: wrap; } }
-header.top .nav { display: flex; gap: 12px; margin-left: 8px; }
-header.top .nav a { color: var(--muted); font-size: 13px; }
-header.top .nav a.on { color: var(--text); font-weight: 600; }
 header.top .spacer { flex: 1; }
 .pill {
   font: 600 11px/1 var(--font); padding: 5px 9px; border-radius: 20px;
@@ -80,7 +77,6 @@ select, .btn {
   border-radius: 8px; padding: 5px 10px; font: 500 12px var(--font); cursor: pointer;
 }
 .btn:hover, .pill:hover { border-color: #33466244; border-color: #334662; }
-.btn.danger:hover { border-color: var(--rose); color: var(--rose); }
 
 h2.section { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 26px 0 10px; }
 
@@ -168,11 +164,7 @@ html[data-theme="light"] .feed .row { border-bottom-color: #e3e8f2; }
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
 .card h3 { margin: 0 0 4px; font-size: 15px; }
-.card .desc { color: var(--muted); font-size: 12.5px; min-height: 34px; }
 .card .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.card .kv { font: 12px/1.8 var(--mono); color: var(--muted); }
-.card .kv b { color: var(--text); font-weight: 600; }
 .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
 .small { font-size: 11px; }
-footer.foot { color: var(--muted); font-size: 11px; margin-top: 32px; border-top: 1px solid var(--line); padding-top: 10px; display: flex; gap: 16px; }

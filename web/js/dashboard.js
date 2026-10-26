@@ -121,15 +121,6 @@ const histBasis = (l, k) => {
 const e2eHourNum = l => histNum(l, 'e2e');
 const e2eHourBasis = l => histBasis(l, 'e2e');
 
-function savingsFor(l, secs) {
-  const p = state.pricing;
-  if (!p || !l) return '–';
-  const pre = l.prefill_tps_avg || 0, dec = l.decode_tps_avg || 0;
-  if (!pre && !dec) return '–';
-  const perSec = (pre * p.input_per_mtok + dec * p.output_per_mtok) / 1e6;
-  return '$' + (perSec * secs).toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
-
 // ---------------- build ----------------
 
 const eng = () => Object.keys(state.engines)[0];
@@ -1044,7 +1035,6 @@ let uiPrefs = readUiPrefs();
 // the chosen base — relationships between roles (decode vs prefill vs
 // latency hues) stay exactly as in the default orange theme (user spec:
 // "nuances of the base color the same way as in the default theme now").
-const NOW_HUE = 29;                        // hue of house orange #ff8c1a
 const FAMILY_BASE = { cobalt: '#4f8cff', teal: '#2dd4bf', violet: '#a78bfa',
                       rose: '#fb7185', yellow: '#facc15', green: '#34d399' };
 function hexToHsl(hex) {
