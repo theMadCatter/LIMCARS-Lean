@@ -898,35 +898,17 @@ const dashPane = document.querySelector('#dash-pane');
 const tracesFrame = document.querySelector('#traces-frame');
 const btnTraces = document.querySelector('#btn-traces');
 async function openTraces() {
-  // password gate: forward the recipe password to the iframe so the vendored
-  // UI can authenticate its transcript fetches (?pw= accepted server-side).
-  // Rebuilt whenever state.pw changes (audit finding: a one-shot latch froze
-  // an unauthenticated or stale-pw URL into both frame and new-tab pill)
-  const pwNow = state.pw || '';
-  if (tracesFrame.dataset.built === '1' && tracesFrame.dataset.pwUsed === pwNow) {
-    // already authenticated with the current pw — just show it
-  } else {
-    let src = '/subagent-watch/';
-    try {
-      const st = await (await fetch('/api/auth/status')).json();
-      if (st.enabled) {
-        if (!state.pw) {
-          const v = await pwDialog('🔒 Hermes Traces are password-protected',
-                                   [{ label: 'Password' }]);
-          const p = v && v[0];
-          if (p) { state.pw = p; sessionStorage.setItem('lc-pw', p); }
-        }
-        if (state.pw) src += '?pw=' + encodeURIComponent(state.pw);
-      }
-    } catch (e) { /* gate check failed: open anyway, server decides */ }
+  // Hermes traces authenticate through the shared `limcars_session` cookie
+  // the browser already carries for the main dashboard. No more ?pw= on
+  // the iframe URL (the password would end up in server logs / referrer
+  // headers / history). If the cookie is missing the iframe itself bounces
+  // to /login via the fetch wrapper in subagent-watch/app.js.
+  if (tracesFrame.dataset.built !== '1') {
+    const src = '/subagent-watch/';
     tracesFrame.src = src;
-    // the new-tab pill must carry the SAME authenticated URL — without ?pw=
-    // the standalone page loads but every trace fetch 401s (user-caught:
-    // 'goes to a page that is not populated with any traces')
     const nt = document.querySelector('#traces-newtab');
     if (nt) nt.href = src;
     tracesFrame.dataset.built = '1';
-    tracesFrame.dataset.pwUsed = state.pw || '';
   }
   dashPane.style.display = 'none';
   tracesPane.style.display = 'block';
