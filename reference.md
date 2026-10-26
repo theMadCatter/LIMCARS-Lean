@@ -65,6 +65,30 @@ picking up this task start here before anything else.
 (Nothing concerning was added in the four post-review commits — see
 "Context on arrival".)
 
+## PR trail (branches rooted at main)
+
+| PR | Branch | Status | What |
+|---|---|---|---|
+| #1 | `cursor/secure-by-default-01a8` | **merged** as `941b36a` | security hardening + login UI + systemd fix + tests |
+| #2 | `cursor/engine-auth-headers-01a8` | rebased onto post-#1 main | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
+
+## Findings since the security pass
+
+- **F-10 engines behind API keys silently went dark** — every outbound
+  HTTP call (sampler `/metrics`, `/v1/models`, engine-info `/version`,
+  the probe's chat completion, live-engine `/v1/models` fingerprint)
+  attached only a `User-Agent`. A vLLM `--api-key` or a LiteLLM proxy
+  would 401 every poll and the dashboard sat blank. Fixed with
+  `app/http_client.py` and three config fields (`api_key`,
+  `api_key_env`, `auth_header`, `headers`); env-var lookup is the
+  recommended path so secrets stay off disk.
+- **F-2b probe target was hardcoded to "first engine"** — fully fixed
+  in PR #1 (the server side) and PR #2 (the UI now sends
+  `?engine=<id>`). Note after the rebase: main's probe handler already
+  parses `?engine=`; this branch kept main's cleaner null-chain form
+  and just adds `eng=smp.eng` to the `probe_mod.probe(...)` call for
+  the per-engine auth header.
+
 ## Work plan
 
 - **PR 1 — Secure by default.** Flip the defaults, add bearer / cookie

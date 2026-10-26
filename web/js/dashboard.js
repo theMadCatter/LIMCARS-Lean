@@ -1002,7 +1002,9 @@ function renderScope() {
 
 async function renderInfo() {
   let d;
-  try { d = await (await fetch('/api/engine-info')).json(); }
+  const id = eng();
+  const qs = id ? ('?engine=' + encodeURIComponent(id)) : '';
+  try { d = await (await fetch('/api/engine-info' + qs)).json(); }
   catch (e) { return; }  // audit: kept showing pre-outage config as current
   const t = document.querySelector('#info-tbl');
   if (!d.healthy) { t.innerHTML = `<tr><td class="muted">${escH(String(d.error || 'offline'))}</td></tr>`; return; }
@@ -1616,7 +1618,9 @@ document.querySelector('#btn-probe').addEventListener('click', async () => {
   const out = document.querySelector('#probe-out');
   out.innerHTML = '⚡ probing… <span class="muted">streaming a ~1.3k-token request</span>';
   try {
-    const r = await (await fetch('/api/probe', { method: 'POST' })).json();
+    const id = eng();
+    const qs = id ? ('?engine=' + encodeURIComponent(id)) : '';
+    const r = await (await fetch('/api/probe' + qs, { method: 'POST' })).json();
     out.innerHTML = r.ok
       ? `⚡ probe: <b>TTFT ${Math.round(r.ttft_ms)} ms</b> · PP <b>${r.pp_tps != null ? Math.round(r.pp_tps).toLocaleString('en-US') : '–'} tok/s</b> · TG <b>${r.tg_tps != null ? Math.round(r.tg_tps) : '–'} tok/s</b><br><span class="muted">prompt ${r.prompt_tokens} tok · completion ${r.completion_tokens} tok · ${new Date(r.at * 1000).toTimeString().slice(0, 8)}</span>`
       : `⚡ probe failed: ${escH(String(r.error))}`;

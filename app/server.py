@@ -520,7 +520,9 @@ class Handler(BaseHTTPRequestHandler):
                 if hit and now - hit[0] < hit[2]:
                     return self._json(hit[1])
             try:
-                res = probe_mod.probe(smp.url, smp.model)
+                # Pass the engine config so an API-key-protected engine
+                # answers the probe instead of 401'ing.
+                res = probe_mod.probe(smp.url, smp.model, eng=smp.eng)
             except Exception as exc:  # noqa: BLE001
                 res = {"ok": False, "error": str(exc)[:300]}
             with _PROBE_LOCK:
@@ -797,10 +799,15 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/engine-info/?", path)
         if m:
             from . import engine_info
-            smp = next(iter(self.app.engines.all()), None)
+            engine_id = (qs.get("engine") or [None])[0]
+            smp = (self.app.engines.get(engine_id) if engine_id else None) \
+                or next(iter(self.app.engines.all()), None)
             if not smp:
                 return self._json({"healthy": False, "error": "no engine"})
-            return self._json(engine_info.info(smp.url))
+            # Pass the engine config so per-engine auth headers (api_key,
+            # Authorization overrides) are attached to the /metrics,
+            # /v1/models and /version calls.
+            return self._json(engine_info.info(smp.url, smp.eng))
         m = re.fullmatch(r"/api/settings/?", path)
         if m:
             return self._json(self.app.settings_all())

@@ -11,6 +11,8 @@ import json
 import re
 import urllib.request
 
+from .http_client import engine_headers, make_request
+
 
 def _labels(text: str, metric: str) -> dict:
     m = re.search(r"^" + re.escape(metric) + r"\{([^}]*)\}", text, re.M)
@@ -48,23 +50,33 @@ def _launch_cmd(port: int | None) -> str | None:
     return best
 
 
-def info(url: str) -> dict:
+def info(url: str, eng: dict | None = None) -> dict:
+    """Build the Server-config panel payload.
+
+    `eng` is the engine's config entry — carries `api_key` / `headers`
+    for key-protected engines. Kept optional so existing callers that
+    only knew the URL still work; the dashboard passes it through.
+    """
     out: dict = {"healthy": False, "url": url}
+    hdrs = engine_headers(eng or {})
     try:
-        text = urllib.request.urlopen(url + "/metrics", timeout=5).read().decode()
+        text = urllib.request.urlopen(
+            make_request(url + "/metrics", headers=hdrs), timeout=5).read().decode()
         labels = _labels(text, "vllm:cache_config_info")
         drafts = _val(text, "vllm:spec_decode_num_drafts_total") or 0
         dtok = _val(text, "vllm:spec_decode_num_draft_tokens_total") or 0
         atok = _val(text, "vllm:spec_decode_num_accepted_tokens_total") or 0
         model = None
         try:
-            md = json.loads(urllib.request.urlopen(url + "/v1/models", timeout=5).read())
+            md = json.loads(urllib.request.urlopen(
+                make_request(url + "/v1/models", headers=hdrs), timeout=5).read())
             model = (md.get("data") or [{}])[0].get("id")
         except Exception:  # noqa: BLE001
             pass
         ver = None
         try:
-            body = urllib.request.urlopen(url + "/version", timeout=3).read().decode()
+            body = urllib.request.urlopen(
+                make_request(url + "/version", headers=hdrs), timeout=3).read().decode()
             try:
                 ver = json.loads(body).get("version", body[:40])
             except ValueError:
