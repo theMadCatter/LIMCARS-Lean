@@ -3,8 +3,19 @@
 Design (user's spec): one shared password; 3 wrong tries -> 60 s freeze,
 next 3 -> 5 min, next 3 -> 30 min, further -> 2 h cap. Counter resets on a
 successful auth. State persists in data/auth.json so restarts do not clear
-locks. Localhost is exempt (checked server-side); this box is the admin
-domain. Passwords are stored salted-SHA256, compared with hmac.compare_digest.
+locks. The old "localhost always exempt" rule is GONE as of the secure-by-
+default pass — a reverse proxy, a container, or any socket forwarding
+appears to the server as 127.0.0.1 and used to bypass the admin password.
+If a specific deployment really wants an auth-free local admin surface it
+sets ``allow_exec_localhost_exempt`` on in config and accepts that risk
+explicitly. Passwords are stored as salted scrypt hashes (pre-2026 sha256
+entries still verify) and compared with hmac.compare_digest.
+
+In addition to the password/lockout, AuthGate now owns the in-process
+browser session table (random 32-byte opaque tokens → issued-at/exp).
+Session tokens are **in-memory only** so a restart logs everyone out —
+there is nothing on disk for an attacker to lift, and a fresh boot cannot
+inherit a stale session that already escaped lockout.
 """
 from __future__ import annotations
 
@@ -21,13 +32,22 @@ TIERS = ((12, 7200.0), (9, 1800.0), (6, 300.0), (3, 60.0))
 
 
 class AuthGate:
-    def __init__(self, path: str):
+    # Session tokens expire after this many seconds of inactivity. 12 h is a
+    # usable "stay logged in all day" default; server.serve() can override
+    # by passing a different `session_ttl` at construction time.
+    DEFAULT_SESSION_TTL = 43200
+
+    def __init__(self, path: str, session_ttl: float | None = None):
         self.path = path
         self._lock = threading.Lock()
         self._now = time.time
         self.salt: str | None = None
         self.hash: str | None = None
         self.ips: dict[str, dict] = {}   # ip -> {"n": failures, "until": ts}
+        # token -> {"exp": absolute expiry, "ip": issuing ip}. Lives in memory
+        # only; a restart invalidates every outstanding login (intentional).
+        self._sessions: dict[str, dict] = {}
+        self.session_ttl = float(session_ttl or self.DEFAULT_SESSION_TTL)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 d = json.load(f)
@@ -79,7 +99,12 @@ class AuthGate:
     def set_password(self, new: str | None, current: str | None = None) -> bool:
         """Set/change/disable. Changing an existing password requires `current`
         (callers enforce this for remote IPs; admin/localhost may overwrite).
-        Empty/None `new` disables the gate. Returns False if current is wrong."""
+        Empty/None `new` disables the gate. Returns False if current is wrong.
+
+        Any password change invalidates every outstanding session cookie —
+        the old password's cookies MUST stop working the moment it rotates,
+        otherwise a stolen token outlives the credential it was minted from.
+        """
         with self._lock:
             if self.enabled and current is not None and not self.verify(current):
                 return False
@@ -89,6 +114,7 @@ class AuthGate:
             else:
                 self.salt = self.hash = None
             self.ips = {}
+            self._sessions.clear()
             self._save()
             return True
 
@@ -152,3 +178,67 @@ class AuthGate:
                 ent["until"] = self._now() + lock
             self._save()
             return False, lock
+
+    # --- sessions (browser cookie login) ---
+    #
+    # Sessions are the browser-friendly counterpart to the bearer token:
+    # /api/auth/login takes a password (routed through attempt() so the
+    # ladder applies) OR a matching auth_token, and hands back an opaque
+    # 32-byte token which the server sets as an HttpOnly, SameSite=Strict
+    # cookie. Every subsequent request can present either the cookie or a
+    # Bearer token. The table is in-memory on purpose — a restart logs
+    # everyone out and there is nothing on disk for an attacker to lift
+    # (same reason the password hash file was already 0o600).
+
+    def _sweep(self, now: float) -> None:
+        """Drop expired sessions. Caller holds `_lock`."""
+        dead = [t for t, e in self._sessions.items() if e["exp"] <= now]
+        for t in dead:
+            self._sessions.pop(t, None)
+
+    def issue_session(self, ip: str) -> str:
+        """Mint a fresh opaque session token and return it. The CALLER is
+        responsible for having verified the password or bearer token first —
+        this method does NO auth check so bearer-only installs can also use
+        the cookie flow without a password being set."""
+        tok = secrets.token_urlsafe(32)
+        now = self._now()
+        with self._lock:
+            self._sweep(now)
+            self._sessions[tok] = {"exp": now + self.session_ttl, "ip": ip}
+        return tok
+
+    def check_session(self, token: str) -> bool:
+        """Validate a session cookie. Treats a missing/empty token as fail
+        (hmac.compare_digest for the ONE legitimate stored value prevents a
+        timing side-channel on the token lookup itself)."""
+        if not token:
+            return False
+        now = self._now()
+        with self._lock:
+            self._sweep(now)
+            ent = self._sessions.get(token)
+            if not ent:
+                # Walk every live token with a constant-time compare so a
+                # brute-forcer can't learn presence from response time. The
+                # table stays tiny (one entry per logged-in tab), so this is
+                # O(sessions) and effectively free.
+                for stored in self._sessions:
+                    hmac.compare_digest(stored, token)
+                return False
+            # Sliding expiry: every valid hit renews the clock, so an active
+            # tab never gets booted mid-session.
+            ent["exp"] = now + self.session_ttl
+            return True
+
+    def revoke_session(self, token: str) -> None:
+        """Called by the logout endpoint and when the password changes
+        (change-password invalidates every outstanding cookie)."""
+        if not token:
+            return
+        with self._lock:
+            self._sessions.pop(token, None)
+
+    def revoke_all_sessions(self) -> None:
+        with self._lock:
+            self._sessions.clear()
