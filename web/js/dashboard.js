@@ -254,6 +254,48 @@ function buildCharts() {
     v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: 128, autoY: false });
 }
 
+// ---------------- toasts + in-page confirm (no blocking alert/confirm) ----------------
+
+function toast(msg, kind = 'info') {
+  let host = document.getElementById('toasts');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'toasts'; host.className = 'toasts';
+    host.setAttribute('role', 'status'); host.setAttribute('aria-live', 'polite');
+    document.body.appendChild(host);
+  }
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.textContent = msg;
+  t.title = 'click to dismiss';
+  t.addEventListener('click', () => t.remove());
+  host.appendChild(t);
+  setTimeout(() => t.remove(), kind === 'err' ? 8000 : 4500);
+}
+
+function confirmDialog(msg, okLabel = 'OK') {
+  return new Promise(resolve => {
+    const prev = document.activeElement;
+    const ov = document.createElement('div');
+    ov.className = 'rec-overlay';
+    ov.innerHTML = `<div class="rec-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="cf-msg">
+      <div class="confirm-msg" id="cf-msg"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button class="pill" data-a="0">Cancel</button><button class="btn confirm-ok" data-a="1"></button></div></div>`;
+    ov.querySelector('.confirm-msg').textContent = msg;
+    ov.querySelector('.confirm-ok').textContent = okLabel;
+    const done = v => { ov.remove(); prev && prev.focus && prev.focus(); resolve(v); };
+    ov.addEventListener('click', e => {
+      if (e.target === ov) return done(false);
+      const b = e.target.closest('button[data-a]');
+      if (b) done(b.dataset.a === '1');
+    });
+    ov.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } });
+    document.body.appendChild(ov);
+    ov.querySelector('button[data-a="0"]').focus();   // destructive actions: safe default
+  });
+}
+
 const escH = s => String(s || '').replace(/[<>"'\\]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '\\': '&#92;' }[c]));
 
@@ -873,13 +915,13 @@ async function renderInfo() {
     body: JSON.stringify({ name, cmd }) }).then(r => r.json());
   const bqs = document.querySelector('#rec-qs');
   if (bqs) bqs.onclick = () => {
-    if (!d.launch) return alert('no running launch recipe detected');
+    if (!d.launch) return toast('No running launch recipe detected', 'err');
     recipeDialog({ title: '＋ Add Quickstart — current running recipe',
       name: '🚀 ' + (d.model || 'engine').split('/').pop(), cmd: d.launch, onSave: saveRec });
   };
   const bec = document.querySelector('#rec-edit-cur');
   if (bec) bec.onclick = () => {
-    if (!d.launch) return alert('no running launch recipe detected');
+    if (!d.launch) return toast('No running launch recipe detected', 'err');
     recipeDialog({ title: '✎ Edit current recipe → save to sidebar',
       name: '🔧 ' + (d.model || 'engine').split('/').pop(), cmd: d.launch, onSave: saveRec });
   };
@@ -1375,7 +1417,7 @@ document.querySelector('#pr-save').addEventListener('click', async () => {
   const r = await (await fetch('/api/config', { method: 'POST', body: JSON.stringify(body) })).json();
   if (r.ok) { state.pricing = r.config.pricing; await seed(false);
     document.querySelector('#pricing-edit').style.display = 'none'; }
-  else alert('save failed: ' + (r.error || '?'));
+  else toast('Save failed: ' + (r.error || '?'), 'err');
 });
 
 document.querySelector('#btn-probe').addEventListener('click', async () => {
@@ -1570,7 +1612,7 @@ async function recAction(id, act, btn) {
     .then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
   if (res.ok === false) {
     if (btn) { btn.disabled = false; btn.textContent = act === 'start' ? '▶ Start' : '■ Stop'; }
-    alert('⚠ ' + (res.error || act + ' failed'));
+    toast('⚠ ' + (res.error || act + ' failed'), 'err');
   }
   loadRecipes();
 }
@@ -1606,7 +1648,7 @@ document.querySelector('#btn-recipes-manage').onclick = async () => {
   ov.querySelectorAll('.rec-mdel').forEach(b => b.onclick = async () => {
     const row = b.closest('.rec-mrow');
     const res = await post(`/api/recipes/${row.dataset.id}/delete`);
-    if (res.ok === false) { alert('⚠ ' + (res.error || 'delete failed')); return; }
+    if (res.ok === false) { toast('⚠ ' + (res.error || 'delete failed'), 'err'); return; }
     row.remove();
     loadRecipes();
   });
@@ -1646,11 +1688,11 @@ async function loadEngines() {
     const row = b.closest('.eng-row');
     const pid = row.dataset.pid;
     const label = row.querySelector('.rec-name').textContent;
-    if (!confirm(`Stop ${label} (pid ${pid})?\nThis SIGTERMs → SIGKILLs its whole process group.`)) return;
+    if (!(await confirmDialog(`Stop ${label} (pid ${pid})?\nThis SIGTERMs → SIGKILLs its whole process group.`, '■ Stop'))) return;
     b.disabled = true; b.textContent = 'stopping…';
     const res = await fetch(`/api/engines-live/${pid}/stop`, { method: 'POST' })
       .then(r => r.json()).catch(err => ({ ok: false, error: String(err) }));
-    if (res.ok === false) { b.disabled = false; b.textContent = '■ Stop'; alert('⚠ ' + (res.error || 'stop failed')); }
+    if (res.ok === false) { b.disabled = false; b.textContent = '■ Stop'; toast('⚠ ' + (res.error || 'stop failed'), 'err'); }
     loadEngines();
   });
 }
@@ -1710,7 +1752,7 @@ async function authFetch(url, opts = {}) {
   }
   if (r.status === 423) {
     let s = 60; try { s = Math.ceil((await r.clone().json()).retry_after || 60); } catch (e) {}
-    alert(`⏳ Too many wrong passwords — locked for ~${s} s. Try again after that.`);
+    toast(`⏳ Too many wrong passwords — locked for ~${s} s. Try again after that.`, 'err');
   }
   return r;
 }
@@ -1745,12 +1787,15 @@ document.querySelector('#btn-auth').addEventListener('click', async () => {
   let nw = (d.enabled ? v[1] : v[0]) || '';
   if (!nw.trim()) nw = '';
   const rep = d.enabled ? v[2] : v[1];
-  if (nw && rep !== nw) return alert('Passwords do not match.');
+  if (nw && rep !== nw) return toast('Passwords do not match.', 'err');
   const r = await fetch('/api/auth/set', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ current: cur, new: nw }) }).then(r => r.json())
     .catch(e => ({ ok: false, error: String(e) }));
-  if (r.ok) { state.pw = nw || ''; sessionStorage.setItem('lc-pw', state.pw); renderAuth(); }
-  else alert(r.error === 'locked' ? `⏳ Locked — retry in ${Math.ceil(r.retry_after || 60)} s`
-        : 'Failed: ' + (r.error || '?'));
+  if (r.ok) {
+    state.pw = nw || ''; sessionStorage.setItem('lc-pw', state.pw); renderAuth();
+    toast(nw ? 'Password saved ✓' : 'Password protection removed', 'ok');
+  }
+  else toast(r.error === 'locked' ? `⏳ Locked — retry in ${Math.ceil(r.retry_after || 60)} s`
+        : 'Failed: ' + (r.error || '?'), 'err');
 });

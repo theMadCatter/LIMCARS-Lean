@@ -101,3 +101,17 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 .rec-mrow { display: flex; align-items: center; gap: 8px; padding: 7px 4px;
   border-bottom: 1px solid var(--line); }
 .rec-mname { font-weight: 600; }
+
+/* toasts + in-page confirm */
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px; max-width: min(420px, 92vw); }
+.toast { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; line-height: 1.45; box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  cursor: pointer; white-space: pre-line; animation: toast-in .18s ease-out; }
+.toast.ok { border-left-color: var(--green); }
+.toast.err { border-left-color: var(--rose); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.confirm-modal { width: min(460px, 94vw); }
+.confirm-msg { font-size: 14px; line-height: 1.55; white-space: pre-line; }
+.btn.confirm-ok { border-color: var(--rose); color: var(--rose); font-weight: 700; }
