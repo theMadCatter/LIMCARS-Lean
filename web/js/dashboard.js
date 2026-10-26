@@ -123,7 +123,8 @@ const e2eHourBasis = l => histBasis(l, 'e2e');
 
 // ---------------- build ----------------
 
-const eng = () => Object.keys(state.engines)[0];
+// selected engine (header switcher; ?engine= > cookie > first configured)
+const eng = () => (state.sel && state.engines[state.sel]) ? state.sel : Object.keys(state.engines)[0];
 const latest = () => (state.engines[eng()] || {}).latest || {};
 const hwLatest = () => state.hw.latest || {};
 
@@ -449,6 +450,7 @@ function refresh() {
   const meta = e.meta || {};
   document.querySelector('#engine-dot').className = 'dot ' + (meta.alive ? 'up' : 'down');
   document.querySelector('#engine-name').textContent = `${meta.model || meta.kind || '–'} @ ${meta.url || ''}`;
+  document.querySelector('#engine-caret').hidden = Object.keys(state.engines).length < 2;
   renderModelTable();
 }
 
@@ -496,7 +498,8 @@ function renderFeed() {
 // ---------------- snapshot + SSE ----------------
 
 async function seed(reseedWindow = true) {
-  const r = await fetch(`/api/snapshot?seconds=${state.windowSec + 30}`);
+  const sel = state.sel ? `&engine=${encodeURIComponent(state.sel)}` : '';
+  const r = await fetch(`/api/snapshot?seconds=${state.windowSec + 30}${sel}`);
   const snap = await r.json();
   state.engines = {};
   for (const [id, e] of Object.entries(snap.engines || {})) {
@@ -1341,9 +1344,75 @@ document.querySelector('#btn-probe').addEventListener('click', async () => {
   } catch (e) { out.innerHTML = `⚡ probe error: ${escH(String(e))}`; }
 });
 
+// ---------------- engine switcher ----------------
+
+function selectEngine(id) {
+  const prev = eng();
+  if (!state.engines[id] || id === prev) return;
+  state.sel = id;
+  uiPrefs = writeUiPrefs({ engine: id });
+  const u = new URL(location.href);
+  u.searchParams.set('engine', id);
+  history.replaceState(null, '', u);
+  for (const card of state.charts) {
+    if (card._fixedWin || !card._series) continue;
+    for (const s of card._series)
+      if (s.key.startsWith(prev + '.')) s.key = id + s.key.slice(prev.length);
+    card._chart && card._chart.mark();
+  }
+  state._held = {}; state._heldNz = {}; state._cacheHitLife = [];
+  fetchCacheLife();
+  seed(false).catch(() => {});
+  refresh();
+  renderModelTable(true);
+}
+
+function wireEngineSwitcher() {
+  const btn = document.querySelector('#btn-engine');
+  const pop = document.querySelector('#engine-pop');
+  const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  const open = () => {
+    const cur = eng();
+    pop.innerHTML = Object.entries(state.engines).map(([id, { meta = {} }]) =>
+      `<button role="option" data-eng="${escH(id)}" aria-selected="${id === cur}">` +
+      `<span class="dot ${meta.alive ? 'up' : 'down'}"></span>` +
+      `<span class="mono">${escH(meta.model || id)}</span>` +
+      `<span class="eng-url">${escH(meta.url || '')}</span></button>`).join('');
+    const r = btn.getBoundingClientRect();
+    pop.style.top = (r.bottom + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + 'px';
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    (pop.querySelector('[aria-selected="true"]') || pop.querySelector('button'))?.focus();
+  };
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (Object.keys(state.engines).length < 2) return;
+    pop.hidden ? open() : close();
+  });
+  pop.addEventListener('click', e => {
+    e.stopPropagation();
+    const b = e.target.closest('button[data-eng]');
+    if (!b) return;
+    close(); btn.focus();
+    selectEngine(b.dataset.eng);
+  });
+  pop.addEventListener('keydown', e => {
+    const items = [...pop.querySelectorAll('button')];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    } else if (e.key === 'Escape') { close(); btn.focus(); }
+  });
+  document.addEventListener('click', close);
+}
+wireEngineSwitcher();
+
 // ---------------- boot ----------------
 
 (async () => {
+  state.sel = new URLSearchParams(location.search).get('engine') || uiPrefs.engine || null;
   try {
     await seed();
   } catch (e) {

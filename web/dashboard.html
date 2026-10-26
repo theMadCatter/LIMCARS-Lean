@@ -12,7 +12,8 @@
 <body>
 <header class="top">
   <div class="brand" title="Local Inference Monitor · Cost Analyzer · Recipe Server">LIMCARS<span class="tagline">Local Inference Monitor · Cost Analyzer · Recipe Server</span></div>
-  <span class="pill engine-pill"><span id="engine-dot" class="dot"></span><span id="engine-name" class="mono">–</span></span>
+  <button class="pill engine-pill" id="btn-engine" title="Engine shown on the dashboard" aria-haspopup="listbox" aria-expanded="false"><span id="engine-dot" class="dot"></span><span id="engine-name" class="mono">–</span><span id="engine-caret" class="eng-caret" hidden>▾</span></button>
+  <div id="engine-pop" class="engine-pop" role="listbox" aria-label="Engines" hidden></div>
   <div class="spacer"></div>
   <span class="muted small charts-label">Charts</span>
   <button class="pill" data-win="180">3 min</button>

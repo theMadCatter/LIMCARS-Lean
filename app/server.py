@@ -483,7 +483,8 @@ class Handler(BaseHTTPRequestHandler):
                     secs = min(secs, float(self.app.cfg.get(
                         "persist_seconds", 3600)) + 300)
             eng_snap = app.engines.snapshots(secs)
-            _model = next(iter(eng_snap.values()), {}).get("model")
+            _sel = (qs.get("engine") or [None])[0]
+            _model = (eng_snap.get(_sel) or next(iter(eng_snap.values()), {})).get("model")
             from . import pricing as _pr
             return self._json({
                 "ok": True, "version": VERSION,
