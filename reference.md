@@ -70,7 +70,8 @@ picking up this task start here before anything else.
 | PR | Branch | Status | What |
 |---|---|---|---|
 | #1 | `cursor/secure-by-default-01a8` | **merged** as `941b36a` | security hardening + login UI + systemd fix + tests |
-| #2 | `cursor/engine-auth-headers-01a8` | rebased onto post-#1 main | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
+| #2 | `cursor/engine-auth-headers-01a8` | **merged** as `569e5c3` | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
+| #3 | `cursor/vllm-older-compat-01a8` | rebased onto post-#2 main (bottom of the stack) | fallback metric names so vLLM 0.4/0.5 still populates KV + spec-decode; tests |
 
 ## Findings since the security pass
 
@@ -81,13 +82,20 @@ picking up this task start here before anything else.
   would 401 every poll and the dashboard sat blank. Fixed with
   `app/http_client.py` and three config fields (`api_key`,
   `api_key_env`, `auth_header`, `headers`); env-var lookup is the
-  recommended path so secrets stay off disk.
-- **F-2b probe target was hardcoded to "first engine"** — fully fixed
-  in PR #1 (the server side) and PR #2 (the UI now sends
-  `?engine=<id>`). Note after the rebase: main's probe handler already
-  parses `?engine=`; this branch kept main's cleaner null-chain form
-  and just adds `eng=smp.eng` to the `probe_mod.probe(...)` call for
-  the per-engine auth header.
+  recommended path so secrets stay off disk. (Shipped in merged PR #2.)
+- **F-11 older vLLM metric names** — vLLM 0.4.x / 0.5.x (what Volta /
+  V100 owners typically pin because flash-attn-dependent newer vLLM
+  does not run on Volta) exposes the KV cache utilisation as
+  `vllm:gpu_cache_usage_perc` and the spec-decode counters without a
+  `_total` suffix; the config-info metric was `vllm:cache_config`
+  before being renamed to `vllm:cache_config_info`. The current
+  dialect only knew the newer names, so a V100 install's KV tile and
+  spec-decode table silently stayed empty. Fixed by adding the older
+  names as alternates in `app/dialects.py` (first-match-wins, so a
+  build that transiently exposes both does not double count) and in
+  `engine_info.info()` — which now ALSO carries the per-engine auth
+  headers merged in PR #2 to each /metrics / /v1/models / /version
+  call (rebase integration).
 
 ## Work plan
 

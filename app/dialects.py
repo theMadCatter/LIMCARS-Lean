@@ -94,7 +94,13 @@ VLLM = {
     "gauge": {
         "running": "vllm:num_requests_running",
         "waiting": "vllm:num_requests_waiting",
-        "kv_pct": "vllm:kv_cache_usage_perc",
+        # KV utilisation gauge: the current name is kv_cache_usage_perc, but
+        # vLLM shipped it as `gpu_cache_usage_perc` through most of the
+        # 0.4.x / 0.5.x line and renamed it only around 0.6. Volta / V100
+        # rigs frequently pin an older build (flash-attn-dependent newer
+        # vLLM does not run on Volta), so the alt keeps the KV cache tile
+        # alive for them without a per-engine config change.
+        "kv_pct": ["vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"],
     },
     "counter": {
         "prompt_tokens": "vllm:prompt_tokens_total",
@@ -109,13 +115,24 @@ VLLM = {
         "cached_tokens": ["vllm:prompt_tokens_cached_total",
                           "vllm:prefix_cache_hits_total"],
         "proc_start": "process_start_time_seconds",
-        "iterations": "vllm:iteration_tokens_total_count",
+        # iteration count moved from an iteration-count histogram
+        # (`vllm:num_iterations_total_count`) to the current
+        # `vllm:iteration_tokens_total_count` around 0.5. Both are harmless
+        # here: whichever one the engine actually exposes wins.
+        "iterations": ["vllm:iteration_tokens_total_count",
+                       "vllm:num_iterations_total_count"],
         "prefix_queries": "vllm:prefix_cache_queries_total",
         "prefix_hits": "vllm:prefix_cache_hits_total",
         "req_success": "vllm:request_success_total",
-        "draft_tokens": "vllm:spec_decode_num_draft_tokens_total",
-        "accepted_tokens": "vllm:spec_decode_num_accepted_tokens_total",
-        "drafts": "vllm:spec_decode_num_drafts_total",
+        # Speculative-decode counters were originally plain
+        # `vllm:spec_decode_*` (0.4 era); the `_total` suffix came in with
+        # the Prometheus-ification pass.
+        "draft_tokens": ["vllm:spec_decode_num_draft_tokens_total",
+                         "vllm:spec_decode_num_draft_tokens"],
+        "accepted_tokens": ["vllm:spec_decode_num_accepted_tokens_total",
+                            "vllm:spec_decode_num_accepted_tokens"],
+        "drafts": ["vllm:spec_decode_num_drafts_total",
+                   "vllm:spec_decode_num_drafts"],
     },
     "hist": {
         "ttft": "vllm:time_to_first_token_seconds",
