@@ -71,3 +71,27 @@ def test_prefill_never_publishes_an_implausible_speed():
     now = time.time()
     _seed_prefill(s, now, prompt=1_000_000, hits=0, pf_secs=1.0, base_age=40.0)
     assert s._prefill_rate(now) is None      # refused, not clamped and shown
+
+
+# --- llama.cpp: completion-charged counters are paired, never per-tick ------
+
+def _mk_lcpp():
+    cfg = {"live_hz": 2.0, "window_s": 30.0, "ring_seconds": 900}
+    return EngineSampler(cfg, {"id": "l", "url": "http://x", "kind": "llamacpp"}, Broker(), store=None)
+
+
+def test_llamacpp_prefill_pairs_processed_tokens_with_prompt_seconds():
+    s = _mk_lcpp()
+    now = time.time()
+    s._win_delta("prefill_compute_tokens", 3000, 0, now - 5, 1.0)
+    s._win_delta("prefill_seconds", 2.0, 0, now - 5, 1.0)
+    assert s._prefill_rate(now) == 1500.0      # no prefill_time hist needed
+
+
+def test_llamacpp_decode_paired_with_compute_seconds():
+    s = _mk_lcpp()
+    now = time.time()
+    s._win_delta("gen_tokens", 500, 0, now - 1, 0.5)    # one completion burst
+    s._win_delta("decode_seconds", 10.0, 0, now - 1, 0.5)
+    assert s._paired_rate("gen_tokens", "decode_seconds") == 50.0
+    assert s._paired_rate("gen_tokens", "missing") is None

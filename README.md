@@ -95,15 +95,16 @@ configuration. Missing metrics degrade to `–`, never to fake zeros.
 | 🔶 SGLang | full — true live prefill rate |
 | 🧊 exl3 | full — exact prefill/generate pairing |
 | 🧮 TensorFold | full — dual metric families, spec decode |
-| 🦙 llama.cpp | basic — running requests + token counters |
+| 🦙 llama.cpp | full counter set — running/deferred, prompt incl. cached, prefix-cache hit %, exact prefill & decode speed (tokens ÷ engine compute seconds), spec decode; no latency histograms upstream |
 | 🗺️ [Atlas](https://github.com/Atlas-Inf/atlas) | partial — running requests, token counters, TTFT, spec-decode acceptance (per verify step); no queue / KV / cached-token metrics upstream |
-| 🔁 TandemLLM-family | **work in progress** — inflight + token counters |
+| 🔁 [TandemLLM](https://github.com/0xBakeer/TandemLLM) | full — `qse_*` contract: counters, cached tokens + hit %, TTFT / ITL / e2e / queue / prefill histograms, spec decode, restart detection |
 
-> **TandemLLM detection is still work in progress.** It is recognised only when
-> the engine advertises the `qse_*` metric names; a stock build that reuses plain
-> vLLM metric names is auto-detected as vLLM, which keeps the throughput panels
-> working but leaves the latency bubbles empty until its metric surface settles
-> upstream. Everything else degrades to `–`, never to fake numbers.
+> **TandemLLM** is recognised from its official `qse_*` metric contract
+> (`server/METRICS.md` upstream); the older `tandemllm:` / `qwen38:` names still
+> work. KV-cache % stays `–` (the engine reports a unified memory pool, not a KV
+> ratio). **llama.cpp** needs `llama-server --metrics`; it has no latency
+> histograms, so TTFT / ITL / e2e bubbles stay `–`. Missing signals always
+> degrade to `–`, never to fake numbers.
 
 Prefill speed is measured **honestly**: prefix-cache hits are excluded and each
 engine family is read through the most exact counter pairing it offers — so you

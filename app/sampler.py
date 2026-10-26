@@ -233,7 +233,8 @@ class EngineSampler(threading.Thread):
             self._win_delta(logical, cur, old, now, dt)
         for logical in ("drafts", "draft_tokens", "accepted_tokens", "spec_steps_ok", "spec_steps",
                         "prefix_hits", "prefix_queries",
-                        "prefill_tokens", "prefill_seconds"):
+                        "prefill_tokens", "prefill_seconds",
+                        "prefill_compute_tokens", "decode_seconds"):
             self._win_delta(logical, counters.get(logical), prev.get(logical), now, dt)
 
         # --- window averages ---
@@ -261,10 +262,20 @@ class EngineSampler(threading.Thread):
         if admitted or (running and not stepped):
             self._pf_last_move = now
         row["prefill_active"] = (now - self._pf_last_move) < 1.5
+        if dial.get("gen_completion_charged"):
+            # gen tokens land when a request finishes (llama.cpp): a per-tick
+            # difference is a completion burst, not a speed. Pair them with the
+            # engine's own decode compute seconds; show "now" only while the
+            # engine is actually stepping.
+            paired = self._paired_rate("gen_tokens", "decode_seconds")
+            moving = it is not None and it_old is not None and it > it_old
+            row["decode_tps_now"] = paired if moving else None
         if (row.get("decode_tps_now") or 0) > 0:
             self._gen_last_move = now
         row["decode_active"] = (now - self._gen_last_move) < 1.5
-        row["decode_tps_avg"] = self._win_rate("gen_tokens")
+        row["decode_tps_avg"] = (self._paired_rate("gen_tokens", "decode_seconds")
+                                 if dial.get("gen_completion_charged")
+                                 else self._win_rate("gen_tokens"))
         row["cache_hit_pct"] = self._win_ratio("prefix_hits", "prefix_queries", scale=100.0)
         row["spec_accept_pct"] = self._win_ratio("accepted_tokens", "draft_tokens", scale=100.0)
         # step-level acceptance (Atlas): share of verify steps accepting >=1 draft
@@ -577,6 +588,14 @@ class EngineSampler(threading.Thread):
         vals = [d for t, d, _ in win if t >= floor_t]
         return sum(vals) if vals else None
 
+    def _paired_rate(self, tok: str, secs: str, since: float | None = None,
+                     cap: float | None = None) -> float | None:
+        t, s = self._win_sum(tok, since), self._win_sum(secs, since)
+        if not t or not s or s <= 0:
+            return None
+        v = t / s
+        return None if cap is not None and v > cap else v
+
     def _win_span(self, logical: str, since: float | None = None) -> float | None:
         win = self._counter_win.get(logical)
         if not win:
@@ -704,7 +723,10 @@ class EngineSampler(threading.Thread):
         """
         base = self._hist_span_delta("prefill_time", self.prefill_win_s)
         if base is None:
-            return None
+            # no prefill histogram (llama.cpp): processed prompt tokens and
+            # prompt compute seconds are charged together — an exact pair
+            return self._paired_rate("prefill_compute_tokens", "prefill_seconds",
+                                     since=now - self.prefill_win_s, cap=PREFILL_MAX)
         d_secs, _d_cnt, covered = base
         anchor = now - covered
         # refuse to publish until the anchors really cover a settle window: a
