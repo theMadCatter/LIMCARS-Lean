@@ -201,7 +201,8 @@ let gpuSig = null;
 function ensureGpuCards() {
   const h = hwLatest();
   const n = h.gpu_count || 0, vram = !!h.vram_total_gb;
-  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}`;
+  const names = (hwSrc().gpus || []).map(g => g.name).join('|');
+  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}:${names}`;   // names: titles fill in once known
   const ramCard = document.querySelector('#sch-ram')?.closest('.side-chart');
   if (sig === gpuSig || !ramCard) return;
   gpuSig = sig;
@@ -721,6 +722,7 @@ async function hwResync() {
     const snap = await (await fetch('/api/snapshot?seconds=210')).json();
     if (snap && snap.hw && snap.hw.series)
       for (const [k, rows] of Object.entries(snap.hw.series)) state.store.seed(`hw.${k}`, rows);
+    if (snap && snap.hw && snap.hw.gpus) state.hw.gpus = snap.hw.gpus;
     if (snap) seedNodes(snap);
     state.lastHwSeed = Date.now();
   } catch { /* server briefly down — the 30 s watchdog retries */ }

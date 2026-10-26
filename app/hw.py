@@ -82,7 +82,7 @@ def _gpu_row(gpus: list[dict]) -> dict:
     lim = vals("power_limit_w")
     row["gpu_power_limit_w"] = round(sum(lim), 1) if len(lim) == len(gpus) else None
     # discrete VRAM only when every card reports it; unified (GB10) stays absent
-    if all(g["mem_total_gb"] for g in gpus):
+    if all(g["mem_total_gb"] and g["mem_used_gb"] is not None for g in gpus):
         row["vram_used_gb"] = round(sum(vals("mem_used_gb")), 2)
         row["vram_total_gb"] = round(sum(vals("mem_total_gb")), 2)
     if len(gpus) > 1:
