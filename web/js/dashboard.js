@@ -3,7 +3,7 @@
 // Same reading order: sidebar system tiles + side charts, hero cards,
 // latency/live/spec/savings bubble rows, six-chart grid, model table.
 
-import { SeriesStore, LineChart, spark, fmt, COLORS } from './charts.js?v=20261023h';
+import { SeriesStore, LineChart, spark, fmt, COLORS } from './charts.js?v=20261026g';
 
 const state = {
   store: new SeriesStore(4000),
@@ -201,11 +201,13 @@ let gpuSig = null;
 function ensureGpuCards() {
   const h = hwLatest();
   const n = h.gpu_count || 0, vram = !!h.vram_total_gb;
-  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}`;
+  const names = (hwSrc().gpus || []).map(g => g.name).join('|');
+  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}:${names}`;   // names: titles fill in once known
   const ramCard = document.querySelector('#sch-ram')?.closest('.side-chart');
   if (sig === gpuSig || !ramCard) return;
   gpuSig = sig;
   document.querySelectorAll('.gpu-dyn').forEach(c => {
+    c._chart && c._chart.destroy();
     state.charts = state.charts.filter(x => x !== c); c.remove(); });
   let after = ramCard;
   const add = (id, title, series, fmtFn, opts) => {
@@ -720,6 +722,7 @@ async function hwResync() {
     const snap = await (await fetch('/api/snapshot?seconds=210')).json();
     if (snap && snap.hw && snap.hw.series)
       for (const [k, rows] of Object.entries(snap.hw.series)) state.store.seed(`hw.${k}`, rows);
+    if (snap && snap.hw && snap.hw.gpus) state.hw.gpus = snap.hw.gpus;
     if (snap) seedNodes(snap);
     state.lastHwSeed = Date.now();
   } catch { /* server briefly down — the 30 s watchdog retries */ }

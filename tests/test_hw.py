@@ -35,3 +35,16 @@ def test_multi_gpu_totals_and_per_card_keys():
 
 def test_no_gpu():
     assert _parse_nvidia("") == [] and _gpu_row([]) == {}
+
+
+def test_missing_memory_used_does_not_break_row():
+    two = ("0, 80, 70, 300.0, 350.00, 1800, 2100, [N/A], 81920, A\n"
+           "1, 20, 55, 100.0, 350.00, 1800, 2100, 1024, 81920, B\n")
+    row = _gpu_row(_parse_nvidia(two))
+    assert "gpu0_mem_pct" not in row and row["gpu1_mem_pct"] == 1.2
+
+
+def test_partial_memory_used_skips_vram_aggregate():
+    two = ("0, 80, 70, 300.0, 350.00, 1800, 2100, [N/A], 81920, A\n"
+           "1, 20, 55, 100.0, 350.00, 1800, 2100, 1024, 81920, B\n")
+    assert "vram_used_gb" not in _gpu_row(_parse_nvidia(two))
