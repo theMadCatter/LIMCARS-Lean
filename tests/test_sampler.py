@@ -95,3 +95,37 @@ def test_llamacpp_decode_paired_with_compute_seconds():
     s._win_delta("decode_seconds", 10.0, 0, now - 1, 0.5)
     assert s._paired_rate("gen_tokens", "decode_seconds") == 50.0
     assert s._paired_rate("gen_tokens", "missing") is None
+
+
+class _SavedStore:
+    def __init__(self, saved):
+        self.saved = saved
+
+    def get_counter_raw(self, _id):
+        return self.saved
+
+
+def test_restart_restores_baseline_when_a_signal_was_dropped():
+    """A baseline written while llama.cpp still mapped `iterations` must still
+    restore once that mapping is gone — or downtime traffic is swallowed."""
+    s = _mk_lcpp()
+    now = time.time()
+    s.store = _SavedStore((now - 120, {"prompt_tokens": 1000, "gen_tokens": 1500,
+                                       "cached_tokens": 0, "req_success": 0,
+                                       "iterations": 1800}))
+    s._rate_minute(now, {"prompt_tokens": 1000, "gen_tokens": 1700, "cached_tokens": 0})
+    assert s._rate_prev["gen_tokens"] == 1500 and s._rate_prev["iterations"] == 0
+    assert s._rate_prev_t == now - 120
+
+
+def test_restart_still_rejects_a_live_counter_that_went_backwards():
+    s = _mk_lcpp()
+    now = time.time()
+    s.store = _SavedStore((now - 120, {"prompt_tokens": 5000, "gen_tokens": 1500}))
+
+    class _Empty(_SavedStore):
+        def counter_totals(self, *_a):
+            return {"empty": False}
+    s.store = _Empty(s.store.saved)
+    s._rate_minute(now, {"prompt_tokens": 1000, "gen_tokens": 1700})
+    assert s._rate_prev_t == now and s._rate_prev["prompt_tokens"] == 1000

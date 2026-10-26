@@ -169,7 +169,8 @@ SGLANG = {
 #   released — so decode speed is paired with tokens_predicted_seconds_total
 #   ("gen_completion_charged"), never a per-tick difference.
 # - prompt_seconds_total pairs exactly with the processed count for prefill.
-# - n_decode_total advances every llama_decode() call — the live step signal.
+# - n_decode_total counts prompt batches AND generation steps, so it cannot
+#   tell prefill from decode and is deliberately NOT mapped to iterations.
 # - kv_cache_usage_ratio (0-1) exists on older builds only; newer ones read None.
 # - no request counter and no histograms upstream: those stay None ("–").
 _LCPP_PROMPT = {"sum": ["llamacpp:prompt_tokens_total", "llamacpp:prompt_tokens_cached_total"]}
@@ -191,7 +192,6 @@ LLAMACPP = {
         "prefill_seconds": "llamacpp:prompt_seconds_total",
         "gen_tokens": ["llamacpp:tokens_predicted_total", "llamacpp:predicted_tokens_total"],
         "decode_seconds": "llamacpp:tokens_predicted_seconds_total",
-        "iterations": "llamacpp:n_decode_total",
         "req_success": "llamacpp:requests_completed",
         "draft_tokens": "llamacpp:spec_decode_num_draft_tokens_total",
         "accepted_tokens": "llamacpp:spec_decode_num_accepted_tokens_total",
