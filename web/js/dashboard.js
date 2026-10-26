@@ -1294,7 +1294,7 @@ function wireThemeUi() {
       e.stopPropagation();
       if (P.pop.hidden) {
         openPop();
-        if (e.detail === 0) P.pop.querySelector('.sel, button')?.focus();   // opened from keyboard
+        if (e.detail === 0) (P.pop.querySelector('.sel') || P.pop.querySelector('button'))?.focus();   // opened from keyboard
       } else closeAll();
     });
     P.pop.addEventListener('click', (e) => {
@@ -1480,7 +1480,9 @@ function prValidate() {
   let ok = true, text = '';
   for (const id of PR_IDS) {
     const v = prVal(id);
-    const bad = v !== '' && !(Number.isFinite(+v) && +v >= 0);
+    // type=number reports half-typed input like "1e" as value '' + badInput
+    const bad = document.querySelector(id).validity.badInput ||
+      (v !== '' && !(Number.isFinite(+v) && +v >= 0));
     document.querySelector(id).setAttribute('aria-invalid', String(bad));
     if (bad) { ok = false; text = 'Prices must be numbers ≥ 0.'; }
   }
