@@ -33,6 +33,35 @@ from .sse import Broker
 VERSION = "1.1.0"
 _START_T = time.time()
 
+# Session cookie carried on every browser request. HttpOnly + SameSite=Strict
+# are set on the Set-Cookie header below; "Strict" ensures a cross-site POST
+# (DNS-rebinding, a malicious link) cannot ride a logged-in tab's cookie
+# into a mutating endpoint. Secure flag is only set when the request itself
+# came over https (we can't blindly turn it on in a local-only install).
+SESSION_COOKIE = "limcars_session"
+
+# Static assets served to anonymous callers (so the login page itself works
+# before any session exists). Everything NOT in this list requires auth when
+# the gate is enabled.
+_PUBLIC_PATHS = {
+    "/favicon.svg", "/favicon.png", "/favicon.ico",
+    "/login", "/login/", "/login.html",
+    "/api/health",             # unauth'd liveness probe (no sensitive data)
+    "/api/auth/status",        # the UI needs to know whether to prompt
+    "/api/auth/login",         # the login POST itself
+}
+_PUBLIC_PREFIXES = ("/css/", "/js/", "/images/")
+# Routes that execute commands or spawn processes. Gated behind cfg.allow_exec
+# AND cfg.auth; every single one of these used to be reachable without the
+# admin password (recipes start/stop, services start/stop, engine kill, probe).
+_EXEC_WRITE_RE = (
+    re.compile(r"^/api/recipes/?$"),                                 # add
+    re.compile(r"^/api/recipes/[\w-]+/(update|delete|start|stop)$"), # mutate+exec
+    re.compile(r"^/api/services/[\w-]+/(start|stop)$"),              # exec
+    re.compile(r"^/api/engines-live/\d+/stop$"),                     # kill
+    re.compile(r"^/api/probe/?$"),                                   # run completion
+)
+
 # Panel settings — same spirit/keys as old LIMCARS dash_settings.json:
 # server-side persisted, shared across all browsers.
 SETTINGS_DEFAULTS = {
@@ -100,7 +129,10 @@ class Limcars:
         from .services import Services
         self.services = Services(cfg)
         from .recipes import Recipes
-        self.recipes = Recipes(str(config.DATA))
+        # `recipes_dir` lets tests (and alternative deployments) target a
+        # scratch directory instead of the shared data/. When unset we keep
+        # the historical path so no existing install moves.
+        self.recipes = Recipes(cfg.get("recipes_dir") or str(config.DATA))
         from .live_engines import LiveEngines
         self.live_engines = LiveEngines()
         self._savhist_cache: dict[int, tuple] = {}   # days -> (ts, payload)
@@ -110,7 +142,8 @@ class Limcars:
         self.clients.start()
         self.settings = _Settings(cfg.get("settings_path", "data/settings.json"))
         from .auth import AuthGate
-        self.auth = AuthGate(cfg.get("auth_path") or str(config.DATA / "auth.json"))
+        self.auth = AuthGate(cfg.get("auth_path") or str(config.DATA / "auth.json"),
+                             session_ttl=cfg.get("session_ttl_s"))
 
     def settings_all(self) -> dict:
         return self.settings.all()
@@ -173,16 +206,86 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code: int, msg: str) -> None:
         self._json({"ok": False, "error": msg}, code)
 
-    def _authorized(self) -> bool:
-        tok = self.app.cfg.get("auth_token")
-        if not tok:
-            return True
-        given = self.headers.get("X-Limcars-Token") or \
-            self.headers.get("Authorization", "").removeprefix("Bearer ")
-        return hmac.compare_digest(given or "", tok)
+    # ---------- auth helpers ----------
+    #
+    # Three independent credentials can satisfy the "logged in" check, in
+    # this precedence order:
+    #   1. a bearer token (`X-Limcars-Token` / `Authorization: Bearer …`)
+    #      matching cfg["auth_token"] — for scripts/curl.
+    #   2. a valid session cookie minted by /api/auth/login — for browsers.
+    #   3. the request originated on localhost AND no auth is required
+    #      (loopback bind with neither a token nor a password set).
+    #
+    # Previously the server fell through to "True" whenever the token was
+    # unset, which left EVERY read AND write endpoint unauthenticated on
+    # the default LAN bind. This method now returns True ONLY when one of
+    # the three conditions above explicitly holds.
 
     def _client_ip(self) -> str:
         return self.client_address[0] if self.client_address else "?"
+
+    def _is_local(self) -> bool:
+        return self._client_ip() in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def _cookie(self, name: str) -> str:
+        """Lookup one cookie value from the request. Keeps parsing cheap and
+        tolerant: a malformed header reads as absent, never as a crash."""
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return ""
+
+    def _bearer_token(self) -> str:
+        """Return the bearer token presented on this request, if any. Both
+        the custom X-Limcars-Token header and the standard Authorization:
+        Bearer form are accepted (symmetric with how /api/auth/login takes
+        them). A duplicated header is treated as absent — never trust a
+        request-smuggled auth header split."""
+        hdrs = self.headers.get_all("X-Limcars-Token") or []
+        if len(hdrs) > 1:
+            return ""
+        if hdrs:
+            return hdrs[0]
+        a = self.headers.get("Authorization", "")
+        if a.startswith("Bearer "):
+            return a[len("Bearer "):]
+        return ""
+
+    def _auth_required(self) -> bool:
+        """True when every route must present credentials. Loopback-only
+        installs with no password and no bearer token stay zero-config (so
+        a solo-dev `python3 -m app` still just works), but ANY exposure
+        beyond loopback or ANY credential being set switches the gate on."""
+        cfg = self.app.cfg
+        if cfg.get("auth_token") or self.app.auth.enabled:
+            return True
+        if not config.is_loopback(cfg.get("host", "")):
+            return True
+        return False
+
+    def _bearer_matches(self) -> bool:
+        tok = self.app.cfg.get("auth_token")
+        if not tok:
+            return False
+        return hmac.compare_digest(self._bearer_token() or "", tok)
+
+    def _session_matches(self) -> bool:
+        return self.app.auth.check_session(self._cookie(SESSION_COOKIE))
+
+    def _authorized(self) -> bool:
+        """Request-level auth check used by both page and API dispatchers."""
+        if not self._auth_required():
+            return True
+        if self._bearer_matches():
+            return True
+        if self._session_matches():
+            return True
+        # Loopback with auth configured still has to log in — the old code
+        # exempted localhost here, which meant a reverse proxy / container
+        # bridge that landed on 127.0.0.1 bypassed the password entirely.
+        return False
 
     def _pw_from_headers(self, default: str = "") -> str:
         """Read the shared password from headers. A duplicated X-Limcars-Pw
@@ -191,40 +294,46 @@ class Handler(BaseHTTPRequestHandler):
         hdrs = self.headers.get_all("X-Limcars-Pw") or []
         if len(hdrs) > 1:
             return default
-        return (hdrs[0] if hdrs else "") or self.headers.get(
-            "Authorization", "").removeprefix("Bearer ") or default
+        return (hdrs[0] if hdrs else "") or default
 
-    def _is_local(self) -> bool:
-        return self._client_ip() in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+    def _require_exec(self, path: str) -> bool:
+        """Gate every command-executing endpoint.
 
-    def _require_write(self) -> bool:
-        """Gate recipe add/edit/delete: password + escalating per-IP lockout.
-        Localhost is exempt (the box itself is the admin domain). Sends the
-        401/423 response itself; returns True when the request may proceed."""
-        if self._is_local() or not self.app.auth.enabled:
-            return True
+        Two independent checks, both have to pass:
+          * `allow_exec` must be true in config. A fresh install ships this
+            OFF so a mis-set or absent password can never spawn a process.
+          * when a password is set, the request must present it (same
+            lockout ladder as the old `_require_write`). An admin-only
+            session cookie is NOT enough on its own — these actions SPAWN
+            PROCESSES and we want a fresh password proof for each.
+
+        Localhost is NOT exempt anymore: see the file-level comment in
+        auth.py for the reasoning. Opt out explicitly with the
+        ``allow_exec_localhost_exempt`` config flag if a legacy deployment
+        needs the old behaviour.
+        """
+        if not self.app.cfg.get("allow_exec"):
+            self._json({"ok": False, "error": "command execution disabled",
+                        "hint": "set 'allow_exec': true in data/config.json "
+                                "or export LIMCARS_ALLOW_EXEC=1 to turn on"},
+                       code=403)
+            return False
+        if not self.app.auth.enabled:
+            # No password set at all: refuse unless a bearer token is also
+            # configured. The bearer proves this request came from someone
+            # trusted even without a password (e.g. a scripted agent).
+            if self._bearer_matches():
+                return True
+            # Localhost-with-no-password opt-out for legacy single-user boxes.
+            if self.app.cfg.get("allow_exec_localhost_exempt") and self._is_local():
+                return True
+            self._json({"ok": False, "error": "set an admin password first",
+                        "hint": "open the dashboard, use the Security panel "
+                                "to set a password, then retry"},
+                       code=403)
+            return False
         ip = self._client_ip()
         pw = self._pw_from_headers()
-        # single atomic gate (lockout check + verify + ladder in one lock hold)
-        ok, rem = self.app.auth.attempt(ip, pw)
-        if ok:
-            return True
-        if rem > 0:
-            self._json({"ok": False, "error": "locked",
-                        "retry_after": round(rem, 1)}, code=423)
-        else:
-            self._json({"ok": False, "error": "wrong password"}, code=401)
-        return False
-
-    def _require_read_traces(self, qs: dict) -> bool:
-        """Gate Hermes Traces data endpoints (transcripts are private).
-        Same password + lockout ladder as recipe edits; localhost exempt.
-        The vendored UI can't set headers from an iframe URL, so ?pw= is
-        accepted too and the parent dashboard forwards it."""
-        if self._is_local() or not self.app.auth.enabled:
-            return True
-        ip = self._client_ip()
-        pw = self._pw_from_headers((qs.get("pw") or [""])[0])
         ok, rem = self.app.auth.attempt(ip, pw)
         if ok:
             return True
@@ -249,19 +358,22 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         path, qs = u.path, urllib.parse.parse_qs(u.query)
         try:
-            if path.startswith("/api/"):
+            # Public (no-auth) surface: the login page, its CSS/JS, the
+            # health probe and the auth status endpoint. Everything else
+            # requires one of {bearer, session cookie, or an auth-off
+            # loopback install} once auth is required at all.
+            if self._auth_required() and not self._is_public_get(path):
                 if not self._authorized():
-                    return self._err(401, "unauthorized")
+                    # Pages redirect to /login, APIs get a JSON 401 so the
+                    # JS clients can surface the right message.
+                    if path.startswith("/api/") or path.startswith("/subagent-watch"):
+                        return self._err(401, "unauthorized")
+                    return self._redirect_to_login()
+            if path.startswith("/api/"):
                 return self._api_get(path, qs)
+            if path == "/login" or path == "/login/" or path == "/login.html":
+                return self._static("/login.html")
             if path.startswith("/subagent-watch"):
-                # static shell is harmless; transcript DATA needs the password
-                if path not in ("/subagent-watch", "/subagent-watch/",
-                                "/subagent-watch/index.html",
-                                "/subagent-watch/app.js",
-                                "/subagent-watch/style.css",
-                                "/subagent-watch/favicon.ico"):
-                    if not self._require_read_traces(qs):
-                        return
                 return self._swatch(path, qs)
             return self._static(path)
         except BrokenPipeError:
@@ -311,19 +423,34 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if not u.path.startswith("/api/"):
             return self._err(404, "not found")
-        if not self._authorized():
-            return self._err(401, "unauthorized")
-        m = re.fullmatch(r"/api/auth/set/?", u.path)
-        if m:
+        # /api/auth/login is the only POST that MUST stay reachable before
+        # any session exists — otherwise a user with auth enabled could not
+        # log in from the browser. /api/auth/status is a public GET but has
+        # no POST shape, so we don't need to list it here.
+        if u.path not in ("/api/auth/login",):
+            if self._auth_required() and not self._authorized():
+                return self._err(401, "unauthorized")
+        # Login handler: trade a password or the configured bearer token for
+        # a session cookie. Uses AuthGate.attempt() so the password path
+        # shares the lockout ladder with recipe writes.
+        if re.fullmatch(r"/api/auth/login/?", u.path):
+            return self._login()
+        if re.fullmatch(r"/api/auth/logout/?", u.path):
+            tok = self._cookie(SESSION_COOKIE)
+            self.app.auth.revoke_session(tok)
+            return self._json({"ok": True}, code=200)
+        if re.fullmatch(r"/api/auth/set/?", u.path):
             body = self._body_json()
             if body is None:
                 return
             new = (body.get("new") or "").strip()
             cur = body.get("current")
             gate = self.app.auth
-            if gate.enabled and not self._is_local():
-                # changing an existing password over the network proves
-                # knowledge of it first (atomic lockout ladder via attempt())
+            if gate.enabled:
+                # Changing an existing password proves knowledge of it first
+                # (atomic lockout ladder via attempt()). The old "localhost
+                # exempt" shortcut here is deliberately gone: a reverse proxy
+                # that terminates on 127.0.0.1 is not implicitly trusted.
                 ok, rem = gate.attempt(self._client_ip(), cur or "")
                 if rem > 0:
                     return self._json({"ok": False, "error": "locked",
@@ -332,12 +459,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "wrong password"},
                                       code=401)
             return self._json({"ok": gate.set_password(new or None, cur)})
-        # Password gate: recipe CONTENT only (add/edit/delete). Start/Stop,
-        # engine stop, services, settings, pricing stay open for convenience
-        # — commands can only ever enter the system through these two doors.
-        if re.fullmatch(r"/api/recipes/?", u.path) or \
-                re.fullmatch(r"/api/recipes/[\w-]+/(update|delete)", u.path):
-            if not self._require_write():
+        # EVERY command-executing route sits behind _require_exec: the
+        # `allow_exec` config flag AND (when a password is set) a fresh
+        # password submission. The exec-write regexes are declared next to
+        # the public-path allowlist at the top of the file.
+        if any(rx.fullmatch(u.path) for rx in _EXEC_WRITE_RE):
+            if not self._require_exec(u.path):
                 return
         m = re.fullmatch(r"/api/services/([\w-]+)/(start|stop)", u.path)
         if m:
@@ -367,7 +494,20 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/probe/?", u.path)
         if m:
             from . import probe as probe_mod
-            smp = next(iter(self.app.engines.all()), None)
+            # Pick the engine the user actually selected (?engine=<id>);
+            # earlier builds hardcoded "the first configured engine" and so a
+            # probe button for a non-default engine fired at the wrong box.
+            engine_id = None
+            try:
+                q = urllib.parse.parse_qs(u.query)
+                engine_id = (q.get("engine") or [None])[0]
+            except ValueError:
+                engine_id = None
+            smp = None
+            if engine_id:
+                smp = self.app.engines.get(engine_id)
+            if smp is None:
+                smp = next(iter(self.app.engines.all()), None)
             if not smp:
                 return self._err(400, "no engine configured")
             # A probe is a real 1300-word generation on the engine. Cache the
@@ -394,6 +534,89 @@ class Handler(BaseHTTPRequestHandler):
             return self._settings_patch()
         return self._err(404, "not found")
 
+    def _login(self) -> None:
+        """Trade a password (or the configured bearer token) for a session
+        cookie. Rate-limited through AuthGate.attempt() so a brute-forcer
+        hits the same ladder as the recipe-write gate (3 bad -> 60 s …).
+
+        Accepting the bearer token here means `curl -d token=…
+        /api/auth/login` is enough to prime a cookie jar — useful for
+        scripted agents that then want to browse the dashboard without
+        attaching the token on every request.
+        """
+        body = self._body_json()
+        if body is None:
+            return
+        pw = (body.get("password") or body.get("pw") or "").strip()
+        tok = (body.get("token") or "").strip()
+        gate = self.app.auth
+        ip = self._client_ip()
+        cfg_tok = self.app.cfg.get("auth_token")
+        if tok and cfg_tok and hmac.compare_digest(tok, cfg_tok):
+            # Bearer login — clear any failure counter the IP accumulated,
+            # so a user who typo'd their password but then pasted the token
+            # isn't still locked out.
+            gate.success(ip)
+            sess = gate.issue_session(ip)
+            return self._send_session(sess)
+        if gate.enabled:
+            ok, rem = gate.attempt(ip, pw)
+            if ok:
+                sess = gate.issue_session(ip)
+                return self._send_session(sess)
+            if rem > 0:
+                return self._json({"ok": False, "error": "locked",
+                                   "retry_after": round(rem, 1)}, code=423)
+            return self._json({"ok": False, "error": "wrong password"}, code=401)
+        if cfg_tok:
+            # Password not set but a bearer token IS configured and the
+            # caller didn't send it in body.token — reject rather than
+            # silently log them in. (Bearer header auth still works for
+            # scripts; this is just the cookie-mint path.)
+            return self._json({"ok": False, "error": "token required"},
+                              code=401)
+        # No auth configured and no auth required: just issue a cookie so
+        # the UI's "logout" button has something to clear.
+        sess = gate.issue_session(ip)
+        self._send_session(sess)
+
+    def _send_session(self, token: str) -> None:
+        body = json.dumps({"ok": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        # Cookie attributes:
+        #   HttpOnly   — JS can't read the token (XSS can't exfiltrate it)
+        #   SameSite=Strict — browsers refuse to attach it to cross-site
+        #                     requests, which is our CSRF defense in depth
+        #                     on top of the existing Origin header check
+        #   Path=/     — scope covers both pages and /api/*
+        attrs = (f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; "
+                 f"Path=/; Max-Age={int(self.app.auth.session_ttl)}")
+        self.send_header("Set-Cookie", attrs)
+        self.end_headers()
+        self._write(body)
+
+    def _redirect_to_login(self) -> None:
+        self.send_response(303)
+        self.send_header("Location", "/login")
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _is_public_get(self, path: str) -> bool:
+        if path in _PUBLIC_PATHS:
+            return True
+        for p in _PUBLIC_PREFIXES:
+            if path.startswith(p):
+                return True
+        return False
+
+    # NOTE: `allow_exec` is deliberately NOT in this set. Flipping the master
+    # exec switch has to be an EXPLICIT edit of data/config.json (or the env
+    # var at boot). A compromised UI session must not be able to turn on
+    # command execution over the API.
     _CONFIG_ALLOWED = {"pricing", "window_s", "live_hz", "hw_hz"}
     SETTING_DEFAULTS = SETTINGS_DEFAULTS
 
@@ -470,8 +693,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "version": VERSION,
                                "uptime_s": round(time.time() - _START_T, 1)})
         if path == "/api/auth/status":
-            return self._json({"enabled": app.auth.enabled,
-                               "locked_for_you": round(app.auth.locked_for(self._client_ip()), 1)})
+            # Reports the password gate, whether a bearer token is set,
+            # whether this session is already authenticated, whether command
+            # execution is enabled (so the UI can grey out Start/Stop
+            # buttons), and the per-IP lockout remaining. All of this is
+            # safe to expose anonymously — none of it reveals a credential.
+            return self._json({
+                "enabled": app.auth.enabled,
+                "token_set": bool(app.cfg.get("auth_token")),
+                "authed": self._authorized(),
+                "auth_required": self._auth_required(),
+                "allow_exec": bool(app.cfg.get("allow_exec")),
+                "locked_for_you": round(app.auth.locked_for(self._client_ip()), 1),
+            })
         if path == "/api/snapshot":
             secs = (qs.get("seconds") or [None])[0]
             try:
@@ -794,12 +1028,55 @@ class Handler(BaseHTTPRequestHandler):
         self._write(data)
 
 
+def _safe_to_bind(cfg: dict, auth_enabled: bool) -> tuple[bool, str]:
+    """Decide whether the (host, auth) combination is allowed to start.
+
+    Loopback binds always boot (solo-dev UX: `python3 -m app` with no
+    config). A non-loopback bind requires at least one of:
+      * a configured bearer token (`auth_token` / `LIMCARS_TOKEN`), or
+      * a password already set in data/auth.json.
+    This is the pre-flight check that keeps a brand new install from
+    exposing arbitrary command execution to the whole LAN.
+    """
+    host = cfg.get("host", "")
+    if config.is_loopback(host):
+        return True, ""
+    if cfg.get("auth_token"):
+        return True, ""
+    if auth_enabled:
+        return True, ""
+    return False, (
+        f"refusing to bind non-loopback host {host!r} with no authentication "
+        "configured.\n"
+        "Pick one and retry:\n"
+        "  * export LIMCARS_HOST=127.0.0.1   (localhost only — the default)\n"
+        "  * export LIMCARS_TOKEN=<secret>   (bearer auth, scripts friendly)\n"
+        "  * start on 127.0.0.1 once, open the Security panel, set an admin "
+        "password, then rebind to the LAN address."
+    )
+
+
 def serve(cfg: dict) -> None:
     app = Limcars(cfg)
+    ok, msg = _safe_to_bind(cfg, app.auth.enabled)
+    if not ok:
+        raise SystemExit(f"[limcars-next] {msg}")
     Handler.app = app
     httpd = ThreadingHTTPServer((cfg["host"], cfg["port"]), Handler)
     httpd.daemon_threads = True
-    print(f"[limcars-next] serving on http://{cfg['host']}:{cfg['port']} "
+    # Boot banner: tell the user exactly which security posture they got, so
+    # a quiet "LAN-wide no-auth install" cannot slip past unnoticed.
+    posture = []
+    if cfg.get("auth_token"):
+        posture.append("bearer-token")
+    if app.auth.enabled:
+        posture.append("password")
+    if cfg.get("allow_exec"):
+        posture.append("ALLOW_EXEC=on")
+    if not posture:
+        posture.append("open (loopback-only)")
+    print(f"[limcars-next] serving on http://{cfg['host']}:{cfg['port']}  "
+          f"[{', '.join(posture)}]  "
           f"(engines: {[s.id for s in app.engines.all()]})")
     try:
         httpd.serve_forever()

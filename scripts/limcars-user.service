@@ -1,0 +1,21 @@
+[Unit]
+# Per-user LIMCARS Lean unit (`systemctl --user`). Lives in
+# ~/.config/systemd/user/ when installed by scripts/install-user-systemd.sh,
+# which also fills in the WorkingDirectory / ExecStart lines with the
+# user's actual clone path.
+Description=LIMCARS Lean — live inference observability (per-user)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=__LIMCARS_DIR__
+ExecStart=/usr/bin/env bash __LIMCARS_DIR__/scripts/start.sh
+Restart=on-failure
+RestartSec=3
+Nice=5
+# Keep the service alive even when the user is not logged in. The
+# installer below enables lingering for the user so this takes effect.
+Environment=XDG_RUNTIME_DIR=%t
+
+[Install]
+WantedBy=default.target

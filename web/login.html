@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!--
+  LIMCARS login page — minimal, no-JS-fallback HTML. Served by server.py
+  for any browser request without a valid session cookie or bearer token.
+  The form POSTs application/json to /api/auth/login; a successful login
+  sets the HttpOnly SameSite=Strict `limcars_session` cookie and bounces
+  the user back to wherever they tried to go (?next=…).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🔒 LIMCARS — Login</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui,
+    -apple-system, Segoe UI, Roboto, sans-serif; background: #0b111c;
+    color: #e9eef7; }
+  main { min-height: 100%; display: flex; align-items: center;
+    justify-content: center; }
+  .card { background: #141d2d; border: 1px solid #243249;
+    border-radius: 12px; padding: 28px 32px; width: min(90vw, 380px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45); }
+  .brand { font-size: 20px; font-weight: 700; letter-spacing: .5px;
+    margin-bottom: 2px; }
+  .tag { color: #90a0bc; font-size: 12px; margin-bottom: 20px; }
+  label { display: block; font-size: 12px; color: #90a0bc; margin: 10px 0 4px; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 12px;
+    font-size: 14px; border-radius: 8px; border: 1px solid #2b3a55;
+    background: #0d1524; color: #e9eef7; }
+  input:focus { outline: 2px solid #4477ff; outline-offset: 1px; }
+  button { margin-top: 16px; width: 100%; padding: 10px 14px;
+    font-size: 14px; font-weight: 600; border-radius: 8px; border: 0;
+    background: #4477ff; color: #0b111c; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .msg { font-size: 12px; min-height: 18px; margin-top: 10px; }
+  .ok { color: #5dd97c; }
+  .err { color: #ff8574; }
+  .hint { color: #90a0bc; font-size: 11px; margin-top: 16px; line-height: 1.5; }
+  a { color: #7ba8ff; }
+</style>
+</head>
+<body>
+<main>
+  <form class="card" id="login-form" method="post" action="/api/auth/login"
+        autocomplete="on">
+    <div class="brand">🏎️ LIMCARS</div>
+    <div class="tag">Local Inference Monitor · Cost Analyzer · Recipe Server</div>
+    <label for="password">Admin password</label>
+    <input type="password" id="password" name="password"
+           autocomplete="current-password" autofocus required>
+    <label for="token" style="margin-top:14px">— or — bearer token</label>
+    <input type="password" id="token" name="token"
+           autocomplete="off" placeholder="LIMCARS_TOKEN (optional)">
+    <button type="submit" id="submit">Sign in</button>
+    <div class="msg" id="msg" role="status" aria-live="polite"></div>
+    <div class="hint">
+      This dashboard runs commands (recipes, services) and can read your
+      Hermes transcripts. Treat the password as admin credentials.
+    </div>
+  </form>
+</main>
+<script>
+  // JSON submit so the server can set HttpOnly cookies and the form never
+  // needs to leave the page. A plain <form> POST would still work (the
+  // server accepts form-encoded bodies as a fallback), but the JSON path
+  // lets us surface wrong-password + lockout messages in-page.
+  (function () {
+    'use strict';
+    const form = document.getElementById('login-form');
+    const msg = document.getElementById('msg');
+    const btn = document.getElementById('submit');
+    const next = new URLSearchParams(location.search).get('next') || '/';
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      msg.className = 'msg'; msg.textContent = '';
+      btn.disabled = true;
+      const body = {
+        password: form.password.value,
+        token: form.token.value,
+      };
+      let r;
+      try {
+        r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = 'Network error: ' + e.message;
+        btn.disabled = false;
+        return;
+      }
+      let d = null;
+      try { d = await r.json(); } catch (_) { /* non-JSON response */ }
+      if (r.ok && d && d.ok) {
+        msg.className = 'msg ok';
+        msg.textContent = 'Signed in — redirecting…';
+        location.href = next.startsWith('/') ? next : '/';
+        return;
+      }
+      if (r.status === 423) {
+        const s = Math.ceil((d && d.retry_after) || 60);
+        msg.className = 'msg err';
+        msg.textContent = `Too many wrong tries — locked for ~${s}s.`;
+      } else if (r.status === 401) {
+        msg.className = 'msg err';
+        msg.textContent = (d && d.error) || 'Wrong password or token.';
+      } else {
+        msg.className = 'msg err';
+        msg.textContent = (d && d.error) || `Login failed (HTTP ${r.status}).`;
+      }
+      btn.disabled = false;
+    });
+  })();
+</script>
+</body>
+</html>

@@ -14,70 +14,41 @@
    so they hit the hub's /subagent-watch/* API routes. */
 const API = '';
 
-// LIMCARS-NEXT password gate: the parent dashboard embeds this page with
-// ?pw=<password>; attach it to every data fetch (server accepts the header).
-const LC_PW = new URLSearchParams(location.search).get('pw') || '';
-// audit hygiene: once the pw is captured into LC_PW, drop it from the address
-// bar so history/back-button/shared URLs don't keep the cleartext password
-if (LC_PW) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
-if (LC_PW) {
-  const _lcFetch = window.fetch.bind(window);
-  let lcBad = false;
+// Auth is now carried by the shared HttpOnly `limcars_session` cookie
+// (set by the main login page or /api/auth/login). An iframe or standalone
+// tab inherits the cookie for free, so this page no longer passes the
+// password through the URL query string. If the cookie is missing or
+// expired, every data route 401s and we bounce to /login?next=<here> —
+// which also strips any legacy ?pw= someone bookmarked, so a wrong
+// password cannot linger in logs or history.
+(function stripLegacyPw() {
+  const q = new URLSearchParams(location.search);
+  if (q.has('pw') || q.has('pwretry')) {
+    q.delete('pw'); q.delete('pwretry');
+    try {
+      const qs = q.toString();
+      history.replaceState(null, '',
+        location.pathname + (qs ? '?' + qs : ''));
+    } catch (e) { /* non-fatal */ }
+  }
+})();
+(function wireAuthFetch() {
+  const _rawFetch = window.fetch.bind(window);
+  let bounced = false;
   window.fetch = async (u, o = {}) => {
-    const r = await _lcFetch(u, Object.assign({}, o, {
-      headers: Object.assign({}, o.headers, { 'X-Limcars-Pw': LC_PW }) }));
-    // wrong pw in the URL: bounce back to the masked prompt (once — the
-    // retry param has no pw, so the else-branch prompt cannot loop)
-    if ((r.status === 401 || r.status === 423) && !lcBad) {
-      lcBad = true;
-      setTimeout(() => { location.href = location.pathname + '?pwretry=1'; }, 500);
+    const r = await _rawFetch(u, o);
+    if ((r.status === 401 || r.status === 423) && !bounced) {
+      bounced = true;
+      const next = encodeURIComponent(location.pathname + location.search);
+      // Give the current render loop a chance to unwind before navigating,
+      // otherwise some callers log a stray "locked" error in the console.
+      setTimeout(() => { location.href = '/login?next=' + next; }, 50);
+      throw new Error('unauthenticated');
     }
+    if (r.status === 401 || r.status === 423) throw new Error('unauthenticated');
     return r;
   };
-} else {
-  // opened standalone without ?pw= (bookmark, shared link): the data routes
-  // 401 and the page would sit EMPTY (user-caught). Prompt for the password
-  // once — masked input, never echo — then reload authenticated.
-  const _lcRawFetch = window.fetch.bind(window);
-  let lcAsked = false;
-  window.fetch = async (u, o = {}) => {
-    const r = await _lcRawFetch(u, o);
-    if ((r.status === 401 || r.status === 423) && !lcAsked) {
-      lcAsked = true;
-      const box = document.createElement('div');
-      box.id = 'lc-pwbox';
-      box.style.cssText = 'position:fixed;inset:0;background:rgba(8,12,20,.88);' +
-        'display:flex;align-items:center;justify-content:center;z-index:9999';
-      box.innerHTML = '<div style="background:#141c2b;border:1px solid #2b3a55;' +
-        'border-radius:12px;padding:22px 24px;font:14px system-ui;color:#dce6f5;' +
-        'box-shadow:0 12px 40px rgba(0,0,0,.5)"><div style="margin-bottom:12px">' +
-        '🔒 Hermes Traces are password-protected</div><input id="lc-pwin" type="password" ' +
-        'placeholder="Password" autocomplete="current-password" style="width:220px;' +
-        'padding:8px 10px;border-radius:8px;border:1px solid #33456a;background:#0b111c;' +
-        'color:#dce6f5;font:14px system-ui"><div style="margin-top:12px;text-align:right">' +
-        '<button id="lc-pwgo" style="padding:7px 16px;border-radius:8px;border:0;' +
-        'background:#ff8c3a;color:#0b111c;font-weight:700;cursor:pointer">Open</button>' +
-        '</div><div id="lc-pwerr" style="color:#ff6b6b;margin-top:8px;display:none">' +
-        'Wrong password — try again</div></div>';
-      document.body.appendChild(box);
-      const go = () => {
-        const v = document.getElementById('lc-pwin').value;
-        if (!v) return;
-        location.href = location.pathname + '?pw=' + encodeURIComponent(v);
-      };
-      box.querySelector('#lc-pwgo').addEventListener('click', go);
-      box.querySelector('#lc-pwin').addEventListener('keydown', e => {
-        if (e.key === 'Enter') go(); });
-      box.querySelector('#lc-pwin').focus();
-      if (location.search.includes('pwretry')) {
-        box.querySelector('#lc-pwerr').style.display = 'block';
-      }
-      throw new Error('locked');   // stop the calling render loop; overlay rules
-    }
-    if (r.status === 401 || r.status === 423) throw new Error("locked");
-    return r;
-  };
-}
+})();
 const POLL_MS = 3000;            // auto-follow poll interval (running task open)
 const SLOW_POLL_MS = 10000;      // no-growth fallback interval
 const STALE_STOP_MS = 60000;     // stop when file stopped growing this long AND summary found
