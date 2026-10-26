@@ -244,6 +244,7 @@ def test_atlas_reads_and_step_level_spec_acceptance():
     g, c, h = D.read_gauges(s, dial), D.read_counters(s, dial), D.read_hists(s, dial)
     assert g["running"] == 3 and g.get("waiting") is None and g.get("kv_pct") is None
     assert c["prompt_tokens"] == 12000 and c["gen_tokens"] == 3000 and c["req_success"] == 40
-    assert c["accepted_tokens"] == 90 and c["draft_tokens"] == 200      # 45 % of verify steps
+    assert c["spec_steps_ok"] == 90 and c["spec_steps"] == 200          # 45 % of verify steps
+    assert c.get("accepted_tokens") is None and c.get("draft_tokens") is None   # not tokens
     assert c.get("cached_tokens") is None and c.get("drafts") is None
     assert h["ttft"] is not None and h.get("e2e") is None

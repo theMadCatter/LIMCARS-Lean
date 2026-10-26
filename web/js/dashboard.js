@@ -46,8 +46,10 @@ const BUBS = {
       sub: l => `${e2eHourBasis(l)} · now ${sec(histNum(l, 'e2e'))} · lifetime ${sec(l.e2e_life_avg_ms)}` },
     { label: 'Spec acceptance', series: 'spec_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
       sparkFmt: v => v.toFixed(1) + ' %',
-      main: l => pct(l.spec_accept_pct),
-      sub: l => `accept len ${l.spec_accept_len != null ? l.spec_accept_len.toFixed(2) : '–'} tok · `
+      main: l => pct(l.spec_accept_pct ?? l.spec_step_accept_pct),
+      sub: l => l.spec_accept_pct == null && l.spec_step_accept_pct != null
+        ? 'of verify steps accepted ≥1 draft · engine reports steps, not tokens'
+        : `accept len ${l.spec_accept_len != null ? l.spec_accept_len.toFixed(2) : '–'} tok · `
               + `${l.draft_tok_per_step != null ? l.draft_tok_per_step.toFixed(1) : '–'} draft tok/step · DFlash` },
     { label: 'Prefix cache hit', series: 'cache_hit_pct', tip: 'Share of prompt tokens served from the prefix cache — median over the last hour. Cached tokens are a subset of prompt tokens, never added on top.', life: true, color: () => COLORS.teal,
       sparkFmt: v => v.toFixed(1) + ' %',

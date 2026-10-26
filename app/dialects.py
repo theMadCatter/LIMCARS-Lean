@@ -286,8 +286,10 @@ ATLAS = {
         "gen_tokens": "atlas_generation_tokens_total",
         "req_success": "atlas_requests_total",
         "proc_start": "process_start_time_seconds",
-        "accepted_tokens": ["atlas_spec_decode_verify_total", {"outcome": "accept*"}],
-        "draft_tokens": "atlas_spec_decode_verify_total",
+        # verify STEPS, not tokens: kept apart from accepted/draft_tokens so the
+        # token-level spec_accept_pct stays None ("–") for Atlas
+        "spec_steps_ok": ["atlas_spec_decode_verify_total", {"outcome": "accept*"}],
+        "spec_steps": "atlas_spec_decode_verify_total",
     },
     "hist": {
         "ttft": "atlas_time_to_first_token_seconds",
