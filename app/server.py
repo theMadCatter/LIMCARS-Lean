@@ -95,6 +95,8 @@ class Limcars:
         from .hw import HwSampler
         self.hw = HwSampler(cfg, self.broker, self.store)
         self.hw.start()
+        from .nodes import start_nodes
+        self.nodes = start_nodes(cfg, self.broker)   # agentless cluster nodes (SSH)
         from .services import Services
         self.services = Services(cfg)
         from .recipes import Recipes
@@ -495,6 +497,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pricing": self.app.cfg.get("pricing") or _pr.resolve(_model),
                 "engines": eng_snap,
                 "hw": app.hw.snapshot(secs),
+                "nodes": {n.id: n.snapshot(secs) for n in app.nodes},
                 "services": app.services.status_all(),
             })
         if path == "/api/history":
@@ -633,7 +636,8 @@ class Handler(BaseHTTPRequestHandler):
         # 2 s forever (user: "the web ui keeps refreshing itself very often").
         known = set(self.app.broker._topics.keys())
         core = {"hw", "requests", "events"}
-        allowed = known | core | {f"engine:{s.id}" for s in self.app.engines.all()}
+        allowed = (known | core | {f"engine:{s.id}" for s in self.app.engines.all()}
+                   | {n.topic for n in self.app.nodes})
         bad = [t for t in wanted
                if not _TOPIC_RE.fullmatch(t) or t not in allowed]
         if len(wanted) > 32 or bad:
@@ -803,3 +807,5 @@ def serve(cfg: dict) -> None:
         for s in app.engines.all():
             s.stop()
         app.hw.stop()
+        for n in app.nodes:
+            n.stop()

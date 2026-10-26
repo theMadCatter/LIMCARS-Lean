@@ -74,8 +74,12 @@ const SIDE_TILES = [
   ['GPU temp', h => [h.gpu_temp_c != null ? h.gpu_temp_c.toFixed(0) + ' °C' : '–']],
   ['GPU power', h => [h.gpu_power_w != null ? h.gpu_power_w.toFixed(1) + ' W' : '–']],
   ['GPU clock', h => [h.gpu_clock_mhz != null ? num(h.gpu_clock_mhz) + ' MHz' : '–']],
-  ['Unified RAM', h => [h.mem_total_gb != null ? (h.mem_total_gb - h.mem_used_gb).toFixed(1) + ' GB free' : '–']],
+  [h => h.vram_total_gb ? 'System RAM' : 'Unified RAM',
+   h => [h.mem_total_gb != null ? (h.mem_total_gb - h.mem_used_gb).toFixed(1) + ' GB free' : '–']],
   ['SSD free', h => [h.disk_total_gb != null ? (h.disk_total_gb - h.disk_used_gb).toFixed(0) + ' GB free' : '–']],
+  // discrete GPUs only (hidden on unified-memory boxes like the DGX Spark)
+  ['VRAM', h => [h.vram_total_gb ? (h.vram_total_gb - h.vram_used_gb).toFixed(1) + ' GB free'
+                   + ` of ${Math.round(h.vram_total_gb)}` : '–'], { wide: true, vram: true }],
   // duo/wide: down and up shown side by side in a full-row tile (user ask:
   // not stacked — one after another, double width)
   ['Net traffic', h => h.net_r_mbs != null
@@ -126,7 +130,11 @@ const e2eHourBasis = l => histBasis(l, 'e2e');
 // selected engine (header switcher; ?engine= > cookie > first configured)
 const eng = () => (state.sel && state.engines[state.sel]) ? state.sel : Object.keys(state.engines)[0];
 const latest = () => (state.engines[eng()] || {}).latest || {};
-const hwLatest = () => state.hw.latest || {};
+// sidebar hardware source: this box, or a cluster node picked in the sidebar
+const hwNode = () => (state.nodeSel && state.nodes && state.nodes[state.nodeSel]) || null;
+const hwPrefix = () => hwNode() ? `hw@${state.nodeSel}` : 'hw';
+const hwSrc = () => hwNode() || state.hw || {};
+const hwLatest = () => hwSrc().latest || {};
 
 const cardRefs = [];
 
@@ -159,12 +167,96 @@ function buildCards() {
     cardRefs.push({ el, d, hero: true, v: el.querySelector('.v'), sub: el.querySelector('.sub'), sp: el.querySelector('.spark') });
   }
   document.querySelector('#side-tiles').innerHTML = SIDE_TILES.map(([l, , opt]) =>
-    `<div class="st${opt?.wide ? ' wide' : ''}${opt?.duo ? ' duo' : ''}"><div class="l">${l}</div><div class="v">–</div></div>`).join('');
+    `<div class="st${opt?.wide ? ' wide' : ''}${opt?.duo ? ' duo' : ''}"${opt?.vram && !hwLatest().vram_total_gb ? ' hidden' : ''}>` +
+    `<div class="l">${typeof l === 'function' ? l(hwLatest()) : l}</div><div class="v">–</div></div>`).join('');
   const p = state.pricing;
   document.querySelector('#pricing-note').textContent = p
     ? `· vs ${p.display_name || p.slug || 'API'} @ $${p.cache_write} w / $${p.cache_read} read / $${p.output} out per Mtok` +
       (p.provider ? ` (${p.provider})` : '') + (p.fetched_at ? ` · prices ${String(p.fetched_at).slice(0, 10)}` : '')
     : '· no pricing entry for this model';
+}
+
+function sideChart(host, series, fmtFn, chartOpts = {}) {
+  // user rule: hw side charts always show last 3 min — more relevant than
+  // following the global window button
+  const c = new LineChart(host, { store: state.store, window: 180, h: 110, series, ...chartOpts });
+  const card = host.closest('.side-chart');
+  card._fixedWin = true;
+  if (chartOpts.autoY === false) {   // user choice: power & RAM default to the
+    c.setAutoY(false);               // 0..physical-max view
+    card.querySelector('.autoy').classList.remove('on');
+  }
+  card.querySelector('.autoy').addEventListener('click', () => {
+    const on = c.autoY ? false : true; c.setAutoY(on);
+    card.querySelector('.autoy').classList.toggle('on', on);
+  });
+  card._chart = c; card._series = series; card._cur = card.querySelector('.cur'); card._fmt = fmtFn;
+  state.charts.push(card);
+  return c;
+}
+
+// Discrete-GPU boxes: RAM and VRAM get separate charts, and 2+ cards get one
+// chart each. Unified-memory boxes (DGX Spark) keep the original sidebar.
+let gpuSig = null;
+function ensureGpuCards() {
+  const h = hwLatest();
+  const n = h.gpu_count || 0, vram = !!h.vram_total_gb;
+  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}`;
+  const ramCard = document.querySelector('#sch-ram')?.closest('.side-chart');
+  if (sig === gpuSig || !ramCard) return;
+  gpuSig = sig;
+  document.querySelectorAll('.gpu-dyn').forEach(c => {
+    state.charts = state.charts.filter(x => x !== c); c.remove(); });
+  let after = ramCard;
+  const add = (id, title, series, fmtFn, opts) => {
+    const card = document.createElement('div');
+    card.className = 'chart-card side-chart gpu-dyn';
+    card.innerHTML = `<div class="head"><span class="title"></span><span class="cur"></span>
+      <button class="pill tiny autoy on">AUTO Y</button></div><div id="${id}"></div>`;
+    card.querySelector('.title').textContent = title;
+    after.after(card); after = card;
+    sideChart(card.querySelector('#' + id), series, fmtFn, opts);
+  };
+  if (vram) add('sch-vram', 'VRAM (GB) · last 3 min',
+    [{ key: `${hp}.vram_used_gb`, label: 'GB used', color: () => COLORS.violet, fill: true }],
+    v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: h.vram_total_gb, autoY: false });
+  if (n > 1) {
+    const gpus = hwSrc().gpus || [];
+    for (let i = 0; i < n; i++) {
+      const series = [{ key: `${hp}.gpu${i}_util`, label: 'util %', color: () => COLORS.cobalt, fill: true }];
+      if (vram) series.push({ key: `${hp}.gpu${i}_mem_pct`, label: 'VRAM %', color: () => COLORS.violet });
+      add(`sch-gpu${i}`, `GPU ${i}${gpus[i] ? ' · ' + gpus[i].name : ''} · util${vram ? ' + VRAM' : ''} % · last 3 min`,
+          series, v => v != null ? Math.round(v) + '%' : '', { yCeil: 100 });
+    }
+  }
+}
+// Titles and physical ceilings follow the detected hardware; on a Spark
+// (no VRAM, no power limit reported) they stay exactly as before.
+function adaptHwCharts(h) {
+  const hp = hwPrefix(), from = state._hwPrefix || 'hw';
+  if (hp !== from) {                 // node picker changed: retarget the fixed side charts
+    for (const card of state.charts) {
+      if (!card._fixedWin || !card._series) continue;
+      for (const s of card._series) if (s.key.startsWith(from + '.')) s.key = hp + s.key.slice(from.length);
+      card._lastCur = null;          // never show the previous source's held reading
+      card._chart && card._chart.mark();
+    }
+    state._hwPrefix = hp;
+  }
+  ensureGpuCards();
+  const discrete = !!h.vram_total_gb, many = (h.gpu_count || 0) > 1;
+  const set = (sel, title, ceil) => {
+    const card = document.querySelector(sel)?.closest('.side-chart');
+    if (!card) return;
+    const t = card.querySelector('.title');
+    if (t.textContent !== title) t.textContent = title;
+    if (card._chart && ceil && card._chart.yCeil !== ceil) { card._chart.yCeil = ceil; card._chart.mark(); }
+  };
+  set('#sch-ram', `${discrete ? 'System' : 'Unified'} RAM (GB) · last 3 min`,
+      discrete && h.mem_total_gb ? Math.ceil(h.mem_total_gb) : 128);
+  set('#sch-power', `GPU power${many ? ' · all cards' : ''} · last 3 min`,
+      h.gpu_power_limit_w ? Math.ceil(h.gpu_power_limit_w) : 110);
+  set('#sch-temp', `Temperature (CPU + GPU${many ? ' max' : ''}) · last 3 min`, 100);
 }
 
 function buildCharts() {
@@ -227,24 +319,7 @@ function buildCharts() {
   });
   renderClientChart();
 
-  const side = (hostSel, series, fmtFn, chartOpts = {}) => {
-    const host = document.querySelector(hostSel);
-    // user rule: hw side charts always show last 3 min — more relevant than
-    // following the global window button
-    const c = new LineChart(host, { store: st, window: 180, h: 110, series, ...chartOpts });
-    const card = host.closest('.side-chart');
-    card._fixedWin = true;
-    if (chartOpts.autoY === false) {   // user choice: power & RAM default to the
-      c.setAutoY(false);               // 0..physical-max view
-      card.querySelector('.autoy').classList.remove('on');
-    }
-    card.querySelector('.autoy').addEventListener('click', () => {
-      const on = c.autoY ? false : true; c.setAutoY(on);
-      card.querySelector('.autoy').classList.toggle('on', on);
-    });
-    card._chart = c; card._series = series; card._cur = card.querySelector('.cur'); card._fmt = fmtFn;
-    state.charts.push(card);
-  };
+  const side = (sel, ...args) => sideChart(document.querySelector(sel), ...args);
   // yCeil = physical maximum: with AUTO Y OFF the view is 0..ceiling (real
   // amplitude vs the hardware range); ON zooms to the data extremes.
   side('#sch-power', [{ key: 'hw.gpu_power_w', label: 'W', color: () => COLORS.cobalt, fill: true }], v => v != null ? v.toFixed(1) + ' W' : '', { yCeil: 110, autoY: false });
@@ -253,6 +328,8 @@ function buildCharts() {
   side('#sch-clock', [{ key: 'hw.gpu_clock_mhz', label: 'MHz', color: () => COLORS.teal, fill: true }], v => v != null ? Math.round(v) + ' MHz' : '', { yCeil: 3003 });
   side('#sch-ram', [{ key: 'hw.mem_used_gb', label: 'GB used', color: () => COLORS.rose, fill: true }],
     v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: 128, autoY: false });
+  gpuSig = null;
+  ensureGpuCards();
 }
 
 // ---------------- toasts + in-page confirm (no blocking alert/confirm) ----------------
@@ -467,9 +544,13 @@ function refresh() {
     }
   }
   // side tiles
+  renderNodePicker();
   const h = hwLatest();
   document.querySelectorAll('#side-tiles .st').forEach((el, i) => {
     const vals = SIDE_TILES[i][1](h);
+    const [lbl, , opt] = SIDE_TILES[i];
+    if (typeof lbl === 'function') el.querySelector('.l').textContent = lbl(h);
+    if (opt?.vram) el.hidden = !h.vram_total_gb;
     const vEl = el.querySelector('.v');
     if (SIDE_TILES[i][2]?.duo) {
       vEl.innerHTML = vals.map(s => `<span>${s}</span>`).join('');
@@ -496,6 +577,7 @@ function refresh() {
   document.querySelector('#engine-caret').hidden = Object.keys(state.engines).length < 2;
   updateTabStatus(meta);
   renderStaleBanner(meta);
+  adaptHwCharts(hwLatest());
   renderModelTable();
 }
 
@@ -610,6 +692,7 @@ async function seed(reseedWindow = true) {
   }
   state.hw = snap.hw || {};
   for (const [k, rows] of Object.entries(snap.hw?.series || {})) state.store.seed(`hw.${k}`, rows);
+  seedNodes(snap);
   state.lastHwSeed = Date.now();
   state.pricing = snap.pricing;
   if (reseedWindow) {
@@ -625,11 +708,19 @@ async function seed(reseedWindow = true) {
 // costs one cheap GET and NEVER restarts a chart from 0 — it backfills the
 // window the SSE stream missed (whitelist gaps, server restarts, zombie
 // sockets where reader.read() hangs forever without erroring).
+function seedNodes(snap) {
+  state.nodes = state.nodes || {};
+  for (const [id, n] of Object.entries(snap.nodes || {})) {
+    state.nodes[id] = Object.assign(state.nodes[id] || {}, n);
+    for (const [k, rows] of Object.entries(n.series || {})) state.store.seed(`hw@${id}.${k}`, rows);
+  }
+}
 async function hwResync() {
   try {
     const snap = await (await fetch('/api/snapshot?seconds=210')).json();
     if (snap && snap.hw && snap.hw.series)
       for (const [k, rows] of Object.entries(snap.hw.series)) state.store.seed(`hw.${k}`, rows);
+    if (snap) seedNodes(snap);
     state.lastHwSeed = Date.now();
   } catch { /* server briefly down — the 30 s watchdog retries */ }
 }
@@ -648,7 +739,8 @@ setInterval(() => {
 
 const lastId = {};
 async function connect() {
-  const topics = ['hw', 'requests', 'events', ...Object.keys(state.engines).map(id => `engine:${id}`)].join(',');
+  const topics = ['hw', 'requests', 'events', ...Object.keys(state.engines).map(id => `engine:${id}`),
+                  ...Object.keys(state.nodes || {}).map(id => `hw:${id}`)].join(',');
   // self-heal on (re)connect: hw series come back from the SERVER rings, so a
   // reconnect after a server restart or a dropped socket never starts charts
   // from 0
@@ -692,6 +784,12 @@ async function connect() {
           // 'again the RAM chart does not SHOW the chart')
           for (const [k, v] of Object.entries(o))
             if (k !== 't' && typeof v === 'number') state.store.push(`hw.${k}`, o.t, v);
+        } else if (ev.startsWith('hw:')) {
+          const nid = ev.slice(3), n = state.nodes && state.nodes[nid];
+          if (!n) continue;
+          n.latest = o; n.alive = true; n.error = null;
+          for (const [k, v] of Object.entries(o))
+            if (k !== 't' && typeof v === 'number') state.store.push(`hw@${nid}.${k}`, o.t, v);
         } else if (ev.startsWith('engine:')) {
           const id_ = ev.slice(7);
           const e = state.engines[id_]; if (!e) continue;
@@ -702,6 +800,9 @@ async function connect() {
                            'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
+        } else if (ev === 'events' && o.type === 'node_down') {
+          const n = state.nodes && state.nodes[o.node];
+          if (n) { n.alive = false; n.error = o.error; }
         } else if (ev === 'events' && o.type === 'engine_down') {
           const e = state.engines[o.engine];
           if (e && e.meta) e.meta.alive = false;
@@ -1592,10 +1693,39 @@ function wireEngineSwitcher() {
 }
 wireEngineSwitcher();
 
+// ---------------- cluster node picker (agentless SSH nodes, config `nodes`) ----------------
+
+function renderNodePicker() {
+  const host = document.querySelector('#node-pick'), err = document.querySelector('#node-err');
+  if (!host) return;
+  const ids = Object.keys(state.nodes || {});
+  host.hidden = !ids.length;
+  const sel = hwNode() ? state.nodeSel : null;
+  const sig = sel + '|' + ids.map(id => id + (state.nodes[id].alive ? '+' : '-')).join(',');
+  if (ids.length && host._sig !== sig) {
+    host._sig = sig;
+    host.innerHTML = [[null, 'this box', true], ...ids.map(id => [id, id, state.nodes[id].alive])]
+      .map(([id, label, up]) =>
+        `<button class="pill tiny${id === sel ? ' on' : ''}" data-node="${escH(id ?? '')}" aria-pressed="${id === sel}">` +
+        `<span class="dot ${up ? 'up' : 'down'}"></span>${escH(label)}</button>`).join('');
+  }
+  const n = hwNode();
+  err.hidden = !(n && !n.alive);
+  if (n && !n.alive) err.textContent = `⚠ ${sel} unreachable over SSH — ${n.error || 'no response yet'}`;
+}
+document.querySelector('#node-pick').addEventListener('click', e => {
+  const b = e.target.closest('button[data-node]');
+  if (!b) return;
+  state.nodeSel = b.dataset.node || null;
+  uiPrefs = writeUiPrefs({ node: state.nodeSel });
+  refresh();
+});
+
 // ---------------- boot ----------------
 
 (async () => {
   state.sel = new URLSearchParams(location.search).get('engine') || uiPrefs.engine || null;
+  state.nodeSel = uiPrefs.node || null;
   try {
     await seed();
   } catch (e) {

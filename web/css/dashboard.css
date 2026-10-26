@@ -143,3 +143,8 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 
 /* phones: wide tables scroll inside their card instead of widening the page */
 @media (max-width: 860px) { .main .chart-card { min-width: 0; overflow-x: auto; } }
+
+/* cluster node picker (sidebar hardware source) */
+.node-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.node-pick[hidden], .node-err[hidden] { display: none; }
+.node-err { color: var(--rose); }
