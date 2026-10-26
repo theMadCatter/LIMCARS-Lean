@@ -20,49 +20,49 @@ const HERO = [];
 
 const BUBS = {
   'bub-main': [
-    { label: 'Gen speed', series: 'decode_tps_now', color: () => COLORS.green,
+    { label: 'Gen speed', series: 'decode_tps_now', tip: 'Generated tokens per second right now, plus the average. Dims while the engine is not decoding.', color: () => COLORS.green,
       dimWhen: 'decode_active',
       sparkFmt: v => v.toFixed(1) + ' tok/s',
       main: l => tps(l.decode_tps_now), sub: l => `tok/s now · avg ${tps(l.decode_tps_avg)}` },
-    { label: 'Prefill speed', series: 'prefill_tps_avg', color: () => COLORS.teal, dimZero: true,
+    { label: 'Prefill speed', series: 'prefill_tps_avg', tip: 'Uncached prompt tokens per second of actual prefill time. Cache hits are excluded and attribution is capped, so prompt tokens charged at completion never read as a fake prefill burst.', color: () => COLORS.teal, dimZero: true,
       dimWhen: 'prefill_active',
       sparkFmt: v => v.toFixed(1) + ' tok/s',
       main: l => tps(l.prefill_tps_avg), sub: l => `uncached tok / prefill-sec · burst ${tps(l.prefill_tps_now)}` },
-    { label: 'KV cache used', hot: true, series: 'kv_pct', color: () => COLORS.yellow, holdZero: true,
+    { label: 'KV cache used', hot: true, tip: "Share of the engine's KV token pool in use. Idle vLLM reports 0 while prefix-cached blocks stay resident, so the last non-zero reading is held.", series: 'kv_pct', color: () => COLORS.yellow, holdZero: true,
       sparkFmt: v => v.toFixed(1) + ' %',
       main: l => pct(l.kv_pct),
       sub: l => l.kv_pool_tokens
         ? `${fmtK(l.kv_used_tokens ?? 0)} / ${fmtK(l.kv_pool_tokens)} tok used · ${fmtK(l.kv_free_tokens ?? 0)} free`
         : '% of token pool' },
-    { label: 'Running reqs', series: 'running', color: () => COLORS.green,
+    { label: 'Running reqs', series: 'running', tip: "Requests being decoded now; 'waiting' are queued for a slot.", color: () => COLORS.green,
       sparkFmt: v => String(Math.round(v)),
       main: l => num(l.running), sub: l => `${num(l.waiting)} waiting` },
-    { label: 'TTFT', series: 'ttft_p50_ms', color: () => COLORS.violet, hist: true,
+    { label: 'TTFT', series: 'ttft_p50_ms', tip: 'Time to first token over the last hour. A p50 is shown only with n ≥ 20 requests: engine histogram buckets are coarse, so below that the true mean (sum ÷ count) is shown. n is always displayed.', color: () => COLORS.violet, hist: true,
       sparkFmt: v => Math.round(v) + ' ms',
       main: l => histMs(l, 'ttft'), sub: l => 'time to first token · ' + histBasis(l, 'ttft') },
-    { label: 'e2e latency', series: 'e2e_p50_ms', color: () => COLORS.violet, hist: true,
+    { label: 'e2e latency', series: 'e2e_p50_ms', tip: 'Request in → last token out, queue included. Same rule as TTFT: p50 only at n ≥ 20, otherwise the true mean, with n shown.', color: () => COLORS.violet, hist: true,
       sparkFmt: v => (v / 1000).toFixed(2) + ' s',
       main: l => sec(e2eHourNum(l) != null ? e2eHourNum(l) : histNum(l, 'e2e')),
       sub: l => `${e2eHourBasis(l)} · now ${sec(histNum(l, 'e2e'))} · lifetime ${sec(l.e2e_life_avg_ms)}` },
-    { label: 'Spec acceptance', series: 'spec_accept_pct', color: () => COLORS.violet,
+    { label: 'Spec acceptance', series: 'spec_accept_pct', tip: 'Share of speculative draft tokens the target model accepted, mean accepted length per step and draft tokens proposed per step.', color: () => COLORS.violet,
       sparkFmt: v => v.toFixed(1) + ' %',
       main: l => pct(l.spec_accept_pct),
       sub: l => `accept len ${l.spec_accept_len != null ? l.spec_accept_len.toFixed(2) : '–'} tok · `
               + `${l.draft_tok_per_step != null ? l.draft_tok_per_step.toFixed(1) : '–'} draft tok/step · DFlash` },
-    { label: 'Prefix cache hit', series: 'cache_hit_pct', life: true, color: () => COLORS.teal,
+    { label: 'Prefix cache hit', series: 'cache_hit_pct', tip: 'Share of prompt tokens served from the prefix cache — median over the last hour. Cached tokens are a subset of prompt tokens, never added on top.', life: true, color: () => COLORS.teal,
       sparkFmt: v => v.toFixed(1) + ' %',
       main: l => pct(l.cache_hit_med_1h != null ? l.cache_hit_med_1h : l.cache_hit_pct),
       sub: l => `median · last hour · now ${pct(l.cache_hit_pct)} · lifetime ${pct(l.cache_hit_life_pct)}` },
-    { label: 'Gen speed peak', series: 'gen_peak', color: () => COLORS.cobalt,
+    { label: 'Gen speed peak', series: 'gen_peak', tip: 'Highest decode speed seen in the last hour.', color: () => COLORS.cobalt,
       sparkFmt: v => v.toFixed(1) + ' tok/s',
       main: l => tps(l.gen_peak), sub: () => 'tok/s · last hour' },
   ],
   'bub-savings': [
-    { label: 'Projected save · day', hot: true, series: 'savings_day', savings: 'day', color: () => COLORS.green,
+    { label: 'Projected save · day', hot: true, series: 'savings_day', savings: 'day', tip: 'What the same tokens would cost at the cloud API price shown above — a projection at this rate from the last active hour of real minute buckets. Cached tokens are priced at the cache-read rate; estimated (synthetic) minutes never feed a $ figure.', color: () => COLORS.green,
       sparkFmt: v => '$' + v.toFixed(2) },
-    { label: 'Projected save · month', hot: true, series: 'savings_month', savings: 'month', color: () => COLORS.green,
+    { label: 'Projected save · month', hot: true, series: 'savings_month', savings: 'month', tip: 'What the same tokens would cost at the cloud API price shown above — a projection at this rate from the last active hour of real minute buckets. Cached tokens are priced at the cache-read rate; estimated (synthetic) minutes never feed a $ figure.', color: () => COLORS.green,
       sparkFmt: v => '$' + v.toFixed(2) },
-    { label: 'Projected save · year', hot: true, series: 'savings_year', savings: 'year', color: () => COLORS.green,
+    { label: 'Projected save · year', hot: true, series: 'savings_year', savings: 'year', tip: 'What the same tokens would cost at the cloud API price shown above — a projection at this rate from the last active hour of real minute buckets. Cached tokens are priced at the cache-read rate; estimated (synthetic) minutes never feed a $ figure.', color: () => COLORS.green,
       sparkFmt: v => '$' + v.toFixed(0) },
   ],
 };
@@ -142,6 +142,7 @@ function buildCards() {
       el.innerHTML = `<div class="label">${d.label}</div>
         <div class="value"><span class="v">–</span></div><div class="sub"></div>
         ${d.series ? '<svg class="spark"></svg>' : ''}`;
+      if (d.tip) el.title = d.tip;
       host.appendChild(el);
       cardRefs.push({ el, d, v: el.querySelector('.v'), sub: el.querySelector('.sub'), sp: el.querySelector('.spark') });
     }
@@ -1334,6 +1335,8 @@ async function renderLostPotential() {
   try { d = await (await fetch('/api/lost-potential')).json(); } catch (e) { return; }
   if (!d || !d.ok) { if (grp) grp.style.display = 'none'; host.innerHTML = ''; return; }
   if (grp) grp.style.display = '';
+  host.title = 'Measured best hour/day/month/year only cover periods LIMCARS actually watched; ' +
+    'month/year figures are "at this rate" projections, not measurements. Prices come from data/pricing.json.';
   const pct = d.pct_usage == null ? '—' : d.pct_usage + '%';
   // User-approved wording: lead with the yearly LOSS (best-hour ceiling x
   // 8760 minus the year at recorded pace), then demonstrated peak rate,

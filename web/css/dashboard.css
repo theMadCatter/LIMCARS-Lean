@@ -123,3 +123,6 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 #dash-pane.is-stale #bub-main .bubble .v, #dash-pane.is-stale #bub-main .bubble .sub,
 #dash-pane.is-stale #bub-savings .bubble .v, #dash-pane.is-stale #bub-savings .bubble .sub { opacity: .45; }
 #dash-pane.is-stale #bub-main .bubble .spark, #dash-pane.is-stale #bub-savings .bubble .spark { opacity: .35; }
+
+/* bubble explanations (native title tooltip) */
+.bubble[title] .label, #bub-potential[title] .label { cursor: help; }
