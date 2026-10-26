@@ -268,7 +268,33 @@ TENSORFOLD = {
     },
 }
 
-DIALECTS = {d["kind"]: d for d in (VLLM, SGLANG, LLAMACPP, TANDEMLLM, EXL3, TENSORFOLD)}
+# Atlas (github.com/Atlas-Inf/atlas, crates/spark-server/src/metrics.rs).
+# Exposes no waiting/KV/e2e/itl/prefill/cached signals — those read None ("–").
+# Spec decode: atlas_spec_decode_verify_total{k, outcome} counts VERIFY STEPS,
+# outcome in accept|reject (K=2) or accept_all|accept_partial (dflash/mtp).
+# Acceptance = steps with any accepted draft / all verify steps — the same rule
+# Atlas's own TUI uses (outcome contains "accept"). It is step-level, so no
+# accepted-length or drafts-per-step figure is derived from it.
+ATLAS = {
+    "kind": "atlas",
+    "prefix": "atlas_",
+    "gauge": {
+        "running": "atlas_requests_active",
+    },
+    "counter": {
+        "prompt_tokens": "atlas_prompt_tokens_total",
+        "gen_tokens": "atlas_generation_tokens_total",
+        "req_success": "atlas_requests_total",
+        "proc_start": "process_start_time_seconds",
+        "accepted_tokens": ["atlas_spec_decode_verify_total", {"outcome": "accept*"}],
+        "draft_tokens": "atlas_spec_decode_verify_total",
+    },
+    "hist": {
+        "ttft": "atlas_time_to_first_token_seconds",
+    },
+}
+
+DIALECTS = {d["kind"]: d for d in (VLLM, SGLANG, LLAMACPP, TANDEMLLM, EXL3, TENSORFOLD, ATLAS)}
 
 
 def detect(body: str) -> str | None:
@@ -292,6 +318,10 @@ def detect(body: str) -> str | None:
     # exactly as before, so adding this cannot reclassify another engine.
     if "\nqse_requests_running" in probe or "\nqse_generation_tokens_total" in probe:
         return "tandemllm"
+    # Atlas: checked after every existing family, on its own two core names only
+    if ("\natlas_requests_" in probe or "\natlas_generation_tokens_total" in probe
+            or probe.startswith("# HELP atlas_")):
+        return "atlas"
     return None
 
 

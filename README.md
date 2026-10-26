@@ -96,6 +96,7 @@ configuration. Missing metrics degrade to `–`, never to fake zeros.
 | 🧊 exl3 | full — exact prefill/generate pairing |
 | 🧮 TensorFold | full — dual metric families, spec decode |
 | 🦙 llama.cpp | basic — running requests + token counters |
+| 🗺️ [Atlas](https://github.com/Atlas-Inf/atlas) | partial — running requests, token counters, TTFT, spec-decode acceptance (per verify step); no queue / KV / cached-token metrics upstream |
 | 🔁 TandemLLM-family | **work in progress** — inflight + token counters |
 
 > **TandemLLM detection is still work in progress.** It is recognised only when

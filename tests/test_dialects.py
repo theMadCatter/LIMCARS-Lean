@@ -210,3 +210,40 @@ def test_tandemllm_qse_family_detected_and_mapped():
     assert st[1] == pytest.approx(40.0) and st[2] == 10.0
     # no single-counter counterpart for prefix_queries -> honest None, never 0%
     assert c.get("prefix_queries") is None
+
+
+ATLAS_BODY = """# HELP atlas_requests_total Total requests processed
+# TYPE atlas_requests_total counter
+atlas_requests_total 40
+atlas_requests_active 3
+atlas_prompt_tokens_total 12000
+atlas_generation_tokens_total 3000
+atlas_time_to_first_token_seconds_bucket{model="m",le="0.5"} 30
+atlas_time_to_first_token_seconds_bucket{model="m",le="+Inf"} 40
+atlas_time_to_first_token_seconds_sum{model="m"} 16
+atlas_time_to_first_token_seconds_count{model="m"} 40
+atlas_spec_decode_verify_total{k="2",outcome="accept"} 60
+atlas_spec_decode_verify_total{k="2",outcome="reject"} 40
+atlas_spec_decode_verify_total{k="mtp",outcome="accept_all"} 20
+atlas_spec_decode_verify_total{k="mtp",outcome="accept_partial"} 10
+atlas_spec_decode_verify_total{k="mtp",outcome="reject"} 70
+"""
+
+
+def test_atlas_detected_without_reclassifying_others():
+    assert D.detect(ATLAS_BODY) == "atlas"
+    assert D.detect(VLLM_BODY) == "vllm" and D.detect(SGLANG_BODY) == "sglang"
+    assert D.detect(EXL3_BODY) == "exl3" and D.detect(TENSORFOLD_BODY) == "tensorfold"
+    assert D.detect(VLLM_BODY + "atlas_requests_total 1\n") == "vllm"   # earlier family wins
+
+
+def test_atlas_reads_and_step_level_spec_acceptance():
+    from app import prom
+    dial = D.DIALECTS["atlas"]
+    s = prom.parse(ATLAS_BODY)
+    g, c, h = D.read_gauges(s, dial), D.read_counters(s, dial), D.read_hists(s, dial)
+    assert g["running"] == 3 and g.get("waiting") is None and g.get("kv_pct") is None
+    assert c["prompt_tokens"] == 12000 and c["gen_tokens"] == 3000 and c["req_success"] == 40
+    assert c["accepted_tokens"] == 90 and c["draft_tokens"] == 200      # 45 % of verify steps
+    assert c.get("cached_tokens") is None and c.get("drafts") is None
+    assert h["ttft"] is not None and h.get("e2e") is None
