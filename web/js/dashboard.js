@@ -1302,6 +1302,15 @@ function wireThemeUi() {
 }
 applyTheme();
 wireThemeUi();
+(function wireHeaderTools() {
+  const btn = document.getElementById('btn-tools'), box = document.getElementById('hdr-tools');
+  if (!btn || !box) return;
+  const set = open => { box.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); };
+  btn.addEventListener('click', e => { e.stopPropagation(); set(!box.classList.contains('open')); });
+  box.addEventListener('click', e => e.stopPropagation());
+  document.addEventListener('click', () => set(false));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') set(false); });
+})();
 window.__setTheme = (p, b) => {   // test hook: recolor without page reload
   const patch = {};
   if (p !== undefined && p !== null) patch.palette = p;

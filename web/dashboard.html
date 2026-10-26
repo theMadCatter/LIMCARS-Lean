@@ -19,6 +19,7 @@
   <button class="pill" data-win="180">3 min</button>
   <button class="pill on" data-win="900">15 min</button>
   <button class="pill" data-win="3600">1 h</button>
+  <div class="hdr-tools" id="hdr-tools">
   <select class="pill" id="refresh-sel" title="UI refresh interval (shared setting)" style="appearance:auto">
     <option value="0.5">0.5 s</option><option value="1" selected>1 s</option>
     <option value="2">2 s</option><option value="3">3 s</option><option value="5">5 s</option>
@@ -29,6 +30,8 @@
   <button class="pill" id="btn-bg" title="Page tint theme">🖼️</button>
   <div id="bg-pop" class="palette-pop" hidden></div>
   <button class="pill" id="btn-refresh" title="Re-pull the snapshot now">↻</button>
+  </div>
+  <button class="pill" id="btn-tools" title="Display settings" aria-label="Display settings" aria-haspopup="true" aria-expanded="false" aria-controls="hdr-tools">⚙️</button>
   <span class="pill"><span id="conn-dot" class="dot"></span><span id="conn-txt">…</span></span>
 </header>
 

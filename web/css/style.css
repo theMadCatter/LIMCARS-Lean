@@ -62,6 +62,20 @@ header.top .brand .tagline { color: var(--muted, #8b93a7); font-weight: 400; fon
 }
 /* a phone genuinely needs two rows — that is the only place wrapping returns */
 @media (max-width: 860px) { header.top { flex-wrap: wrap; } }
+/* display controls: inline on desktop (display:contents keeps the row exactly
+   as before); folded behind one ⚙️ button on phones */
+.hdr-tools { display: contents; }
+.hdr-tools > * { flex: none; }
+#btn-tools { display: none; }
+@media (max-width: 860px) {
+  #btn-tools { display: inline-flex; }
+  .hdr-tools { display: none; }
+  .hdr-tools.open {
+    display: flex; flex-wrap: wrap; gap: 8px; position: absolute; right: 12px; top: calc(100% + 4px);
+    padding: 10px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0, 0, 0, .35); z-index: 30;
+  }
+}
 header.top .spacer { flex: 1; }
 .pill {
   font: 600 11px/1 var(--font); padding: 5px 9px; border-radius: 20px;
