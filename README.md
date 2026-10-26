@@ -120,6 +120,7 @@ configuration. Missing metrics degrade to `–`, never to fake zeros.
 | 🦙 llama.cpp | full counter set — running/deferred, prompt incl. cached, prefix-cache hit %, exact prefill & decode speed (tokens ÷ engine compute seconds), spec decode; no latency histograms upstream |
 | 🗺️ [Atlas](https://github.com/Atlas-Inf/atlas) | partial — running requests, token counters, TTFT, spec-decode acceptance (per verify step); no queue / KV / cached-token metrics upstream |
 | 🔁 [TandemLLM](https://github.com/0xBakeer/TandemLLM) | full — `qse_*` contract: counters, cached tokens + hit %, TTFT / ITL / e2e / queue / prefill histograms, spec decode, restart detection |
+| 🌐 [LiteLLM proxy](https://github.com/BerriAI/litellm) | **OSS tier**: in-flight requests, total / failed request counters, total request latency + upstream LLM latency histograms. **Enterprise-only** on Prometheus: per-model token counts, $ spend. For OSS token / spend visibility use `/api/litellm/spend` (see below) which reads `/global/spend/report` and falls back to `/spend/logs`. No KV cache / prefill (LiteLLM is a router, those numbers belong to the upstream engines). |
 
 > **TandemLLM** is recognised from its official `qse_*` metric contract
 > (`server/METRICS.md` upstream); the older `tandemllm:` / `qwen38:` names still
@@ -184,6 +185,37 @@ Handy environment variables:
 | `LIMCARS_DB` | `data/limcars.db` | history database path |
 | `LIMCARS_TOKEN` | *(unset)* | bearer token for the HTTP API and the login page |
 | `LIMCARS_ALLOW_EXEC` | `0` | flip to `1` to enable recipes / services / live-engine kill / probe |
+| `LITELLM_MASTER_KEY` | *(unset)* | admin key for `/api/litellm/spend` when no engine-level key is configured |
+
+### LiteLLM proxy
+
+Add the proxy as an engine with `"kind": "litellm"` so the sampler reads
+the OSS Prometheus metrics, then set the master key for the admin spend
+endpoint:
+
+```json
+{ "engines": [{
+    "id": "litellm", "kind": "litellm",
+    "url": "http://127.0.0.1:4000",
+    "api_key_env": "LITELLM_MASTER_KEY",
+    "label": "LiteLLM proxy"
+}]}
+```
+
+```bash
+# per-model spend / tokens for the last 7 days (uses /global/spend/report
+# first, falls back to /spend/logs). When auth is configured (any
+# non-loopback install), attach the LIMCARS bearer so this call isn't
+# turned away by the secure-by-default gate:
+curl -H "X-Limcars-Token: $LIMCARS_TOKEN" \
+  'http://127.0.0.1:8951/api/litellm/spend?days=7' | jq .
+```
+
+**OSS Prometheus limits:** `litellm_input_tokens`, `litellm_output_tokens`,
+`litellm_total_tokens` and `litellm_spend_metric` are Enterprise-only, so
+LIMCARS's token-count bubbles / savings math stay `–` for a LiteLLM
+engine on the free tier. The `/spend` admin API is OSS and covers both
+via `/api/litellm/spend`.
 
 ## 🔁 Autorun — survive reboots, forget about it
 
