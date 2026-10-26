@@ -91,7 +91,7 @@ configuration. Missing metrics degrade to `–`, never to fake zeros.
 
 | Engine | Support |
 |---|---|
-| 🟣 vLLM (v1) | full — counters, histograms, KV cache, spec decode |
+| 🟣 vLLM (v1) | full — counters, histograms, KV cache, spec decode. Older builds (0.4.x / 0.5.x, often pinned on Volta / V100 due to flash-attn) also supported through fallback metric names (`vllm:gpu_cache_usage_perc`, non-`_total` spec-decode counters, `vllm:cache_config` label set). |
 | 🔶 SGLang | full — true live prefill rate |
 | 🧊 exl3 | full — exact prefill/generate pairing |
 | 🧮 TensorFold | full — dual metric families, spec decode |

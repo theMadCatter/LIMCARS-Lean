@@ -60,12 +60,23 @@ def info(url: str, eng: dict | None = None) -> dict:
     out: dict = {"healthy": False, "url": url}
     hdrs = engine_headers(eng or {})
     try:
+        # Per-engine auth headers (PR #2) attached to every outbound request.
         text = urllib.request.urlopen(
             make_request(url + "/metrics", headers=hdrs), timeout=5).read().decode()
-        labels = _labels(text, "vllm:cache_config_info")
-        drafts = _val(text, "vllm:spec_decode_num_drafts_total") or 0
-        dtok = _val(text, "vllm:spec_decode_num_draft_tokens_total") or 0
-        atok = _val(text, "vllm:spec_decode_num_accepted_tokens_total") or 0
+        # cache_config_info was renamed from vllm:cache_config to
+        # vllm:cache_config_info across the 0.4 -> 0.5 line; neither name
+        # exists at all on pre-0.4 builds and the whole config panel just
+        # degrades to '–' there (unchanged behaviour).
+        labels = (_labels(text, "vllm:cache_config_info")
+                  or _labels(text, "vllm:cache_config"))
+        # Spec-decode names: current `vllm:spec_decode_num_*_total`, older
+        # (0.3/0.4) `vllm:spec_decode_num_*` without the _total suffix.
+        drafts = (_val(text, "vllm:spec_decode_num_drafts_total")
+                  or _val(text, "vllm:spec_decode_num_drafts") or 0)
+        dtok = (_val(text, "vllm:spec_decode_num_draft_tokens_total")
+                or _val(text, "vllm:spec_decode_num_draft_tokens") or 0)
+        atok = (_val(text, "vllm:spec_decode_num_accepted_tokens_total")
+                or _val(text, "vllm:spec_decode_num_accepted_tokens") or 0)
         model = None
         try:
             md = json.loads(urllib.request.urlopen(
