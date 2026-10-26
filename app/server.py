@@ -14,6 +14,7 @@ SSE framing: `id:` per event so a dropped tab resumes with Last-Event-ID.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import hmac
 import logging
@@ -117,6 +118,22 @@ class Limcars:
 
 
 _TOPIC_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}")
+# static text assets are gzipped once per (mtime, size) and served to any
+# client that accepts it; the bytes the browser decodes are unchanged
+_GZIP_MIN = 1024
+_GZIP_TYPES = ("text/", "application/javascript", "application/json", "image/svg+xml")
+_gzip_cache: dict[str, tuple[tuple[int, int], bytes]] = {}
+
+
+def _gzipped(f: Path, data: bytes) -> bytes:
+    st = f.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _gzip_cache.get(str(f))
+    if hit and hit[0] == key:
+        return hit[1]
+    gz = gzip.compress(data, 9, mtime=0)
+    _gzip_cache[str(f)] = (key, gz)
+    return gz
 
 
 def _sse_format(topic: str, sid: int, data: str) -> bytes:
@@ -748,9 +765,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(404, "not found")
         ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
         data = f.read_bytes()
+        compressible = len(data) >= _GZIP_MIN and ctype.startswith(_GZIP_TYPES)
+        gz = compressible and "gzip" in self.headers.get("Accept-Encoding", "")
+        if gz:
+            data = _gzipped(f, data)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if compressible:
+            self.send_header("Vary", "Accept-Encoding")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
         # no-store: dashboards get iterated constantly; a tab resurrected
         # from bfcache running yesterday's JS caused stale prompt() flows
         self.send_header("Cache-Control", "no-store")
