@@ -59,6 +59,41 @@ const BUBS = {
       sparkFmt: v => v.toFixed(1) + ' tok/s',
       main: l => tps(l.gen_peak), sub: () => 'tok/s · last hour' },
   ],
+  // Prefill group — mirrors the four numbers the owner's reference run
+  // reported: GPU-only prefill, user-felt effective prefill (incl.
+  // cache replay), mean prefill time per request, mean TTFT, cache hit
+  // rate. All five tiles share the same prefill-settle window; the UI
+  // keeps the historical sparkline for every one because the fields are
+  // in SERIES_KEYS on the sampler side. tps/pct/ms formatters are the
+  // ones defined further down in this file.
+  'bub-prefill': [
+    { label: 'Prefill · uncached', series: 'prefill_tps_avg', color: () => COLORS.teal, dimZero: true,
+      tip: 'Prompt tokens the GPU actually prefilled per second of prefill compute. Prefix-cache hits are subtracted from the numerator; this is the honest "what the hardware did" rate.',
+      sparkFmt: v => Math.round(v) + ' tok/s',
+      main: l => tps(l.prefill_tps_avg),
+      sub: l => `uncached tok / prefill-sec · ${pct(l.cache_hit_pct)} cached` },
+    { label: 'Prefill · effective', series: 'prefill_tps_eff', color: () => COLORS.green, dimZero: true,
+      tip: 'Prompt tokens served per second of prefill time INCLUDING cache replay. On a cache-friendly workload the number can be several times the uncached rate — on the reference TP4 V100 qwen3 run, ~1009 tok/s effective vs ~340 tok/s uncached.',
+      sparkFmt: v => Math.round(v) + ' tok/s',
+      main: l => tps(l.prefill_tps_eff),
+      sub: l => `incl. cache replay · ${l.prefill_tps_avg && l.prefill_tps_eff
+        ? '×' + (l.prefill_tps_eff / l.prefill_tps_avg).toFixed(2) + ' vs uncached' : 'tok / prefill-sec'}` },
+    { label: 'Prefill time · mean', series: 'prefill_time_avg_ms', color: () => COLORS.violet,
+      tip: 'Mean per-request prefill time over the window — Δsum / Δcount of vllm:request_prefill_time_seconds. A whole prompt that cache-hit sits near 0 ms; a long uncached prompt dominates the mean.',
+      sparkFmt: v => (v / 1000).toFixed(2) + ' s',
+      main: l => _fin(l.prefill_time_avg_ms) ? (l.prefill_time_avg_ms / 1000).toFixed(2) + ' s' : '–',
+      sub: l => `mean per request · ${_fin(l.prefill_time_n) ? l.prefill_time_n : 0} obs` },
+    { label: 'TTFT · mean', series: 'ttft_avg_ms', color: () => COLORS.violet,
+      tip: 'Mean time to first token over the window — Δsum / Δcount of vllm:time_to_first_token_seconds. Includes queueing; use the TTFT bubble above for the hour percentile.',
+      sparkFmt: v => (v / 1000).toFixed(2) + ' s',
+      main: l => _fin(l.ttft_avg_ms) ? (l.ttft_avg_ms / 1000).toFixed(2) + ' s' : '–',
+      sub: l => `mean per request · ${_fin(l.ttft_n) ? l.ttft_n : 0} obs` },
+    { label: 'Prefix cache hit', series: 'cache_hit_pct', color: () => COLORS.teal, life: true,
+      tip: 'Δhits / Δqueries over the window. Fallback to older vLLM names (gpu_prefix_cache_hits_total, bare prefix_cache_hits) is handled in the dialect layer.',
+      sparkFmt: v => v.toFixed(1) + ' %',
+      main: l => pct(l.cache_hit_pct),
+      sub: l => `window · hour med ${pct(l.cache_hit_med_1h)} · lifetime ${pct(l.cache_hit_life_pct)}` },
+  ],
   'bub-savings': [
     { label: 'Projected save · day', hot: true, series: 'savings_day', savings: 'day', tip: 'What the same tokens would cost at the cloud API price shown above — a projection at this rate from the last active hour of real minute buckets. Cached tokens are priced at the cache-read rate; estimated (synthetic) minutes never feed a $ figure.', color: () => COLORS.green,
       sparkFmt: v => '$' + v.toFixed(2) },
@@ -808,8 +843,9 @@ async function connect() {
           const e = state.engines[id_]; if (!e) continue;
           e.latest = o; e.rx = Date.now();
           if (e.meta) { e.meta.latest = o; e.meta.alive = true; }
-          for (const k of ['prefill_tps_now','decode_tps_now','prefill_tps_avg','decode_tps_avg',
-                           'running','waiting','kv_pct','ttft_p50_ms','itl_p50_ms','queue_time_p50_ms',
+          for (const k of ['prefill_tps_now','decode_tps_now','prefill_tps_avg','prefill_tps_eff',
+                           'prefill_time_avg_ms','ttft_avg_ms',
+                           'decode_tps_avg','running','waiting','kv_pct','ttft_p50_ms','itl_p50_ms','queue_time_p50_ms',
                            'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_step_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
@@ -937,6 +973,7 @@ document.addEventListener('keydown', e => {
 
 const SET_OPTS = {
   bubbles_main: 'Bubbles · main strip',
+  bubbles_prefill: 'Bubbles · Prefill tiles',
   bubbles_savings: 'Bubbles · cost-savings',
   bubbles_potential: 'Bubbles · lost potential',
   charts_infer: 'Charts · infer (KV/PP/gen)',
@@ -954,6 +991,7 @@ function applySettings(s) {
     tgt.style.display = off ? 'none' : '';
   };
   hide('#bub-main', sideSettings.bubbles_main === false, '.bub-group');
+  hide('#bub-prefill', sideSettings.bubbles_prefill === false, '.bub-group');
   hide('#bub-savings', sideSettings.bubbles_savings === false, '.bub-group');
   hide('#bub-potential', sideSettings.bubbles_potential === false, '.bub-group');
   hide('#charts-grid', sideSettings.charts_infer === false);

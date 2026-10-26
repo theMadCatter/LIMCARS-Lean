@@ -73,7 +73,8 @@ picking up this task start here before anything else.
 | #2 | `cursor/engine-auth-headers-01a8` | **merged** as `569e5c3` | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
 | #3 | `cursor/vllm-older-compat-01a8` | rebased onto post-#2 main (bottom of stack) | fallback metric names so vLLM 0.4/0.5 still populates KV + spec-decode; tests |
 | #4 | `cursor/http-status-tiles-01a8` | stacked on #3 | status tiles for ComfyUI (queue + system_stats) and generic HTTP health; sidebar section; tests |
-| #5 | `cursor/litellm-proxy-01a8` | stacked on #4 (top of stack) | LiteLLM proxy support: OSS metrics dialect + `/api/litellm/spend` admin aggregator; tests |
+| #5 | `cursor/litellm-proxy-01a8` | **merged** as `d9b8c26` | LiteLLM proxy support: OSS metrics dialect + `/api/litellm/spend` admin aggregator; tests |
+| #6 | `cursor/vllm-true-prefill-01a8` | opened against post-#5 main | true prefill speed tiles (uncached + effective + mean prefill + mean TTFT + hit rate) with sparklines; prefix-cache name fallbacks for older vLLM; tests |
 
 ## Findings since the security pass
 
@@ -110,6 +111,24 @@ picking up this task start here before anything else.
   `_authorized()` gate, so an unauthenticated LAN client can't scan
   the owner's ancillary services. Thread stays idle when
   `status_tiles` is empty.
+- **F-14 vLLM prefill speed was buried and partial** — the dashboard
+  showed a single "Prefill speed" bubble (`prefill_tps_avg` = GPU-only
+  uncached rate) and buried mean prefill time / mean TTFT inside
+  generic histogram fields. The user-felt effective prefill speed
+  (what cached-heavy workloads actually produce — 1009 vs 340 tok/s on
+  the owner's TP4 V100 qwen3 run) was not computed at all. Added
+  `prefill_tps_eff` (Δprompt_tokens / Δprefill_time_sum, no cache
+  subtraction) to the sampler, promoted `prefill_time_avg_ms` and
+  `ttft_avg_ms` to top-level series keys so they ride the SSE stream
+  as sparklines, and dropped a dedicated Prefill tile strip under
+  the main bubbles with all five numbers side-by-side. Dialect gets
+  three new prefix-cache name alternates (`vllm:gpu_prefix_cache_*`,
+  the pre-`_total` names) so a pre-0.5 vLLM or a build with a split
+  CPU/GPU cache still populates the hit rate. 15 new tests covering
+  the math on controlled state, the dialect fallbacks, an end-to-end
+  pipeline test driving four scripted scrapes, a counter-reset
+  scenario, a missing-histogram degrade-to-None path, and the owner's
+  reference run numbers exactly.
 - **F-13 LiteLLM proxy was unsupported** — nothing in the dialect
   catalogue recognised a LiteLLM `/metrics` body, and even if it did,
   LiteLLM's OSS Prometheus endpoint only exposes request counts +
