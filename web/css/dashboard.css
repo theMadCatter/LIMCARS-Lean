@@ -115,3 +115,11 @@ html[data-theme="light"] .st-bar{background:#dbe3f0}
 .confirm-modal { width: min(460px, 94vw); }
 .confirm-msg { font-size: 14px; line-height: 1.55; white-space: pre-line; }
 .btn.confirm-ok { border-color: var(--rose); color: var(--rose); font-weight: 700; }
+
+/* stale-data state: banner + dimmed live bubbles */
+.stale-banner { margin: 0 0 10px; padding: 9px 14px; border-radius: 10px; font-size: 13px;
+  border: 1px solid rgba(251, 113, 133, .45); background: rgba(251, 113, 133, .08); color: var(--text); }
+.stale-banner[hidden] { display: none; }
+#dash-pane.is-stale #bub-main .bubble .v, #dash-pane.is-stale #bub-main .bubble .sub,
+#dash-pane.is-stale #bub-savings .bubble .v, #dash-pane.is-stale #bub-savings .bubble .sub { opacity: .45; }
+#dash-pane.is-stale #bub-main .bubble .spark, #dash-pane.is-stale #bub-savings .bubble .spark { opacity: .35; }

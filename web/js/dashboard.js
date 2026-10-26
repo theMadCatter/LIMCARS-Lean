@@ -494,6 +494,7 @@ function refresh() {
   document.querySelector('#engine-name').textContent = `${meta.model || meta.kind || '–'} @ ${meta.url || ''}`;
   document.querySelector('#engine-caret').hidden = Object.keys(state.engines).length < 2;
   updateTabStatus(meta);
+  renderStaleBanner(meta);
   renderModelTable();
 }
 
@@ -532,6 +533,24 @@ function updateTabStatus(meta) {
   const svg = favSvg.replace('</svg>',
     `<circle cx="50" cy="14" r="12" fill="${col}" stroke="#0b0e13" stroke-width="3"/></svg>`);
   favLink.setAttribute('href', 'data:image/svg+xml,' + encodeURIComponent(svg));
+}
+
+const fmtAge = s => s == null ? 'an unknown time' : s < 90 ? Math.round(s) + ' s'
+  : s < 5400 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
+function renderStaleBanner(meta) {
+  const b = document.querySelector('#stale-banner');
+  if (!b) return;
+  const { st, why, age } = engineHealth();
+  const stale = st !== 'up';
+  document.querySelector('#dash-pane').classList.toggle('is-stale', stale);
+  b.hidden = !stale;
+  if (!stale) return;
+  const name = String(meta.model || meta.id || 'engine').split('/').pop();
+  b.textContent = why === 'stream'
+    ? `⚠ Live stream disconnected — reconnecting. Values below are from ${fmtAge(age)} ago.`
+    : why === 'engine'
+      ? `⚠ ${name} is unreachable — showing its last values from ${fmtAge(age)} ago.`
+      : `⏸ No update from ${name} for ${fmtAge(age)} — values below may be stale.`;
 }
 
 function renderModelTable(force) {
