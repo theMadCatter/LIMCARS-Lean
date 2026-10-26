@@ -40,9 +40,32 @@ from .rings import Ring
 from .sse import Broker
 
 
+_HIST_LOGICALS = ("ttft", "itl", "prefill_time", "decode_time", "queue_time", "e2e")
+_HIST_KEYS = {lg: (f"{lg}_p50_ms", f"{lg}_avg_ms", f"{lg}_n",
+                   f"{lg}_p50_1h_ms", f"{lg}_avg_1h_ms", f"{lg}_n_1h")
+              for lg in _HIST_LOGICALS}
+SERIES_KEYS = ("prefill_tps_now", "decode_tps_now", "prefill_tps_avg",
+               "decode_tps_avg", "running", "waiting", "kv_pct",
+               "kv_pool_tokens", "kv_used_tokens", "kv_free_tokens",
+               "ttft_p50_ms", "itl_p50_ms", "queue_time_p50_ms", "e2e_p50_ms",
+               "cache_hit_pct", "cache_hit_life_pct",
+               "spec_accept_pct", "spec_accept_len", "draft_tok_per_step",
+               "prompt_total", "gen_total", "gen_peak", "requests_total",
+               "savings_day", "savings_month", "savings_year",
+               "e2e_med_1h", "e2e_life_avg_ms")
+
 PREFILL_MAX = 12000.0   # plausibility ceiling, tok/s. Real peak measured on
                         # the GB10 daily driver is ~7.5k; anything above this is
                         # completion-attribution skew, never a speed.
+
+
+def _trim(lst: list, cutoff: float) -> None:
+    """Drop leading (t, ...) entries older than cutoff in one slice delete."""
+    i, n = 0, len(lst)
+    while i < n and lst[i][0] < cutoff:
+        i += 1
+    if i:
+        del lst[:i]
 
 
 class EngineSampler(threading.Thread):
@@ -102,14 +125,13 @@ class EngineSampler(threading.Thread):
     def stop(self) -> None:
         self._stop.set()
 
-    def _median_hit(self, row: dict):
-        return self._hour_median("cache_hit_pct", row.get("cache_hit_pct"))
-
-    def _hour_median(self, key: str, fallback):
+    def _hour_median(self, key: str, fallback, rows=None):
         """Median of a per-tick series over the last hour (user rule: hour
-        median, not the twitchy 30 s window value)."""
-        vals = sorted(r.get(key) for _, r in self.ring.window(3600)
-                      if r.get(key) is not None)
+        median, not the twitchy 30 s window value). `rows` lets one tick
+        share a single ring.window(3600) copy across several medians."""
+        if rows is None:
+            rows = self.ring.window(3600)
+        vals = sorted(v for _, r in rows if (v := r.get(key)) is not None)
         if len(vals) < 5:
             return fallback
         n = len(vals)
@@ -123,16 +145,7 @@ class EngineSampler(threading.Thread):
             "proc_start": getattr(self, "proc_start_t", None),
             "hz": self.hz, "window_s": self.window_s,
             "latest": self.ring.last(),
-            "series": {k: [[t, r.get(k)] for t, r in rows] for k in
-                       ("prefill_tps_now", "decode_tps_now", "prefill_tps_avg",
-                        "decode_tps_avg", "running", "waiting", "kv_pct",
-                        "kv_pool_tokens", "kv_used_tokens", "kv_free_tokens",
-                        "ttft_p50_ms", "itl_p50_ms", "queue_time_p50_ms", "e2e_p50_ms",
-                        "cache_hit_pct", "cache_hit_life_pct",
-                        "spec_accept_pct", "spec_accept_len", "draft_tok_per_step",
-                        "prompt_total", "gen_total", "gen_peak", "requests_total",
-                        "savings_day", "savings_month", "savings_year",
-                        "e2e_med_1h", "e2e_life_avg_ms")},
+            "series": {k: [[t, r.get(k)] for t, r in rows] for k in SERIES_KEYS},
         }
 
     # ---------------- thread ----------------
@@ -257,17 +270,18 @@ class EngineSampler(threading.Thread):
 
         # --- histogram window quantiles ---
         self._hist_snapshot(now, hists)
-        for logical in ("ttft", "itl", "prefill_time", "decode_time", "queue_time", "e2e"):
+        for logical in _HIST_LOGICALS:
+            k_p50, k_avg, k_n, k_p50h, k_avgh, k_nh = _HIST_KEYS[logical]
             d = self._hist_delta(logical)
             p50 = prom.quantile(d[0], 0.50) if d else None
             avg = (d[1] / d[2]) if d else None
-            row[f"{logical}_p50_ms"] = p50 * 1000 if p50 is not None else None
-            row[f"{logical}_avg_ms"] = avg * 1000 if avg is not None else None
+            row[k_p50] = p50 * 1000 if p50 is not None else None
+            row[k_avg] = avg * 1000 if avg is not None else None
             # audit: vLLM's coarse histogram buckets (…2.5/5/10/20/40 s) make a
             # p50 from 1-2 window requests pure bucket-edge fiction; expose the
             # sample count so the UI can prefer the true sum/count mean when n
             # is too small for a percentile to mean anything.
-            row[f"{logical}_n"] = d[2] if d else 0
+            row[k_n] = d[2] if d else 0
             # the SAME statistic over the last hour, from exact cumulative
             # bucket deltas. This is what the latency bubbles read: a 30 s
             # window holds two or three requests in normal use, so its p50 (or
@@ -275,11 +289,10 @@ class EngineSampler(threading.Thread):
             # showed 28.5 s while the engine's hour median was 5 s.
             sl = self._hist_slice(logical, 3600.0)
             if sl:
-                row[f"{logical}_p50_1h_ms"], row[f"{logical}_avg_1h_ms"], \
-                    row[f"{logical}_n_1h"] = sl
+                row[k_p50h], row[k_avgh], row[k_nh] = sl
             else:
-                row[f"{logical}_p50_1h_ms"] = row[f"{logical}_avg_1h_ms"] = None
-                row[f"{logical}_n_1h"] = 0
+                row[k_p50h] = row[k_avgh] = None
+                row[k_nh] = 0
         # e2e smoothing (old LIMCARS gauge basis): cumulative histogram
         # mean = sum/count over the engine's WHOLE life — inherently slow
         # moving like the old dash; plus an hour-median of the p50 samples.
@@ -290,15 +303,12 @@ class EngineSampler(threading.Thread):
         # rule for latency bubbles, without ever inventing a percentile.
         st = hists.get("e2e")
         row["e2e_life_avg_ms"] = (st[1] / st[2] * 1000) if st and st[2] else None
-        # the bubble's headline: one true p50 over the last hour (exact bucket
-        # deltas). Kept alongside e2e_med_1h, which stays for the sparkline.
-        sl = self._hist_slice("e2e", 3600.0)
-        if sl:
-            row["e2e_p50_1h_ms"], row["e2e_avg_1h_ms"], row["e2e_n_1h"] = sl
-        else:
-            row["e2e_p50_1h_ms"] = row["e2e_avg_1h_ms"] = None
-            row["e2e_n_1h"] = 0
-        row["e2e_med_1h"] = self._hour_median("e2e_avg_ms", row.get("e2e_avg_ms"))
+        # the bubble's headline (e2e_p50_1h_ms / e2e_avg_1h_ms / e2e_n_1h, one
+        # true p50 over the last hour) was filled by the histogram loop above;
+        # e2e_med_1h stays alongside it for the sparkline.
+        hour_rows = self.ring.window(3600)
+        row["e2e_med_1h"] = self._hour_median("e2e_avg_ms", row.get("e2e_avg_ms"),
+                                              hour_rows)
 
         # --- request completion events (count jump) ---
         cur_rs = counters.get("req_success")
@@ -355,7 +365,8 @@ class EngineSampler(threading.Thread):
         ps = counters.get("proc_start")
         if ps:
             self.proc_start_t = ps
-        row["cache_hit_med_1h"] = self._median_hit(row)
+        row["cache_hit_med_1h"] = self._hour_median(
+            "cache_hit_pct", row.get("cache_hit_pct"), hour_rows)
 
         self._prev = counters
         self._prev_t = now
@@ -419,7 +430,6 @@ class EngineSampler(threading.Thread):
             return
         if now - self._rate_prev_t < 60.0:
             return
-        dt = now - self._rate_prev_t
         dp = cur_p - self._rate_prev["prompt_tokens"]
         dg = cur_g - self._rate_prev["gen_tokens"]
         dc = cur_c - self._rate_prev.get("cached_tokens", cur_c)
@@ -469,15 +479,6 @@ class EngineSampler(threading.Thread):
                 "synthetic": 1 if (now - self._rate_prev_t) > 120 else 0})
         self._rate_prev = base
         self._rate_prev_t = now
-
-    @staticmethod
-    def _median(vals: list[float]) -> float | None:
-        if not vals:
-            return None
-        vals = sorted(vals)
-        n = len(vals)
-        mid = n // 2
-        return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0
 
     def _compute_savings(self, now: float, counters: dict) -> dict | None:
         """Cost of the same tokens via cloud API. IDENTICAL code path to the
@@ -556,9 +557,7 @@ class EngineSampler(threading.Thread):
         win.append((now, cur - old, dt))
         # keep at least a settle window of deltas: the prefill ratio reads back
         # further than the 30 s window everything else uses
-        cutoff = now - max(self.window_s, self.prefill_win_s) * 1.1
-        while win and win[0][0] < cutoff:
-            win.pop(0)
+        _trim(win, now - max(self.window_s, self.prefill_win_s) * 1.1)
 
     def _win_rate(self, logical: str, since: float | None = None) -> float | None:
         tot_dt = self._win_span(logical, since)
@@ -612,15 +611,12 @@ class EngineSampler(threading.Thread):
                 continue
             base = self._hist_base.setdefault(logical, [])
             base.append((now, state))
-            cutoff = now - self.window_s * 1.25
-            while base and base[0][0] < cutoff:
-                base.pop(0)
+            _trim(base, now - self.window_s * 1.25)
             # 5 s cadence hour history (~740 samples, a few tens of KB)
             if hour_tick:
                 hr = self._hist_hr.setdefault(logical, [])
                 hr.append((now, state))
-                while hr and hr[0][0] < now - 3700:
-                    hr.pop(0)
+                _trim(hr, now - 3700)
             self._hist_prev[logical] = state
 
     def _hist_delta(self, logical: str):
@@ -750,14 +746,6 @@ class EngineSampler(threading.Thread):
             if v <= PREFILL_MAX:
                 return v
         return None
-
-    def _hist_quantile(self, logical: str, q: float) -> float | None:
-        d = self._hist_delta(logical)
-        return prom.quantile(d[0], q) if d else None
-
-    def _hist_avg(self, logical: str) -> float | None:
-        d = self._hist_delta(logical)
-        return d[1] / d[2] if d else None
 
 
 class EngineManager:

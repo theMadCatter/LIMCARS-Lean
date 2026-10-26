@@ -12,6 +12,7 @@ keep history even with no browser attached (the old bug class).
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -160,7 +161,6 @@ class HwSampler(threading.Thread):
             row[f"temp_{k}"] = round(v, 1)
 
         self.ring.append(row, now)
-        import json
         self.broker.publish("hw", json.dumps({"t": now, **row}))
         if self.store:
             self._persist_acc.append((now, row))

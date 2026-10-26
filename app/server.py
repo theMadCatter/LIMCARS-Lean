@@ -116,6 +116,9 @@ class Limcars:
         self.settings.update(patch)
 
 
+_TOPIC_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}")
+
+
 def _sse_format(topic: str, sid: int, data: str) -> bytes:
     return f"id: {topic}:{sid}\nevent: {topic}\ndata: {data}\n\n".encode()
 
@@ -607,12 +610,11 @@ class Handler(BaseHTTPRequestHandler):
         # no engine connected 'requests' and 'events' did not exist yet, the
         # browser's own topic list was rejected, and the page retried a 400 every
         # 2 s forever (user: "the web ui keeps refreshing itself very often").
-        import re as _re
         known = set(self.app.broker._topics.keys())
         core = {"hw", "requests", "events"}
         allowed = known | core | {f"engine:{s.id}" for s in self.app.engines.all()}
         bad = [t for t in wanted
-               if not _re.fullmatch(r"[A-Za-z0-9:_-]{1,64}", t) or t not in allowed]
+               if not _TOPIC_RE.fullmatch(t) or t not in allowed]
         if len(wanted) > 32 or bad:
             return self._err(400, "bad topics")
         # Subscribe to what the broker already carries; a valid topic that has

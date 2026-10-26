@@ -48,43 +48,31 @@ class Store:
         # the active-hour anchor never treats an engine-lifetime dump as
         # "one busy minute" (fresh installs printed $616k/yr savings).
         # Old rows default 0 — harmless: they predate the seed logic.
-        try:
+        cols = {r[1] for r in self._con.execute("PRAGMA table_info(counter_buckets)")}
+        if "synthetic" not in cols:
             self._con.execute(
                 "ALTER TABLE counter_buckets ADD COLUMN synthetic INTEGER DEFAULT 0")
-        except Exception:  # duplicate column on existing DBs
-            pass
         self._con.commit()
 
     def save_engine_samples(self, engine: str, rows: list[tuple[float, dict]]) -> None:
+        payload = [(t, engine, json.dumps(r)) for t, r in rows]   # outside the lock
         with self._lock:
             self._con.executemany(
-                "INSERT INTO engine_samples(t, engine, data) VALUES (?,?,?)",
-                [(t, engine, json.dumps(r)) for t, r in rows])
+                "INSERT INTO engine_samples(t, engine, data) VALUES (?,?,?)", payload)
+            self._prune("engine_samples")
             self._con.commit()
-        self._prune("engine_samples", "t")
 
     def save_hw_samples(self, rows: list[tuple[float, dict]]) -> None:
+        payload = [(t, json.dumps(r)) for t, r in rows]
         with self._lock:
-            self._con.executemany(
-                "INSERT INTO hw_samples(t, data) VALUES (?,?)",
-                [(t, json.dumps(r)) for t, r in rows])
-            self._con.commit()
-        self._prune("hw_samples", "t")
-
-    def save_event(self, kind: str, data: dict) -> None:
-        with self._lock:
-            self._con.execute("INSERT INTO events(t, kind, data) VALUES (?,?,?)",
-                              (time.time(), kind, json.dumps(data)))
-            # audit: events was the one table with no retention (flap forever)
-            self._con.execute("DELETE FROM events WHERE t < ?",
-                              (time.time() - 30 * 86400,))
+            self._con.executemany("INSERT INTO hw_samples(t, data) VALUES (?,?)", payload)
+            self._prune("hw_samples")
             self._con.commit()
 
-    def _prune(self, table: str, col: str) -> None:
-        cutoff = time.time() - self.persist_s
-        with self._lock:
-            self._con.execute(f"DELETE FROM {table} WHERE {col} < ?", (cutoff,))  # noqa: S608 — fixed names
-            self._con.commit()
+    def _prune(self, table: str) -> None:
+        """Retention delete; caller holds the lock and commits."""
+        self._con.execute(f"DELETE FROM {table} WHERE t < ?",  # noqa: S608 — fixed names
+                          (time.time() - self.persist_s,))
 
     def save_counter_bucket(self, engine: str, ts: int, b: dict) -> None:
         ts = int(ts) // 60 * 60      # defensive: minute buckets must align,
@@ -110,9 +98,7 @@ class Store:
                 (engine, ts, b["prompt"], b["cached"], b["gen"], b["reqs"],
                  b["iters"], b["dec_min"], b["dec_peak"], b["spec_sum"],
                  b["spec_n"], synth))
-            self._con.commit()
-        # 366-day retention, old-LIMCARS parity
-        with self._lock:
+            # 366-day retention, old-LIMCARS parity (same transaction)
             self._con.execute("DELETE FROM counter_buckets WHERE ts < ?",
                               (int(time.time()) - 366 * 86400,))
             self._con.commit()
@@ -252,8 +238,7 @@ class Store:
                 cur = self._con.execute(
                     "SELECT t, data FROM hw_samples WHERE t>=? ORDER BY t", (cutoff,))
             rows = cur.fetchall()
-        out = [{"t": t, **json.loads(d)} for t, d in rows]
-        if len(out) > 800:                       # stride downsample for charts
-            step = -(-len(out) // 800)
-            out = out[::step]
-        return out
+        if len(rows) > 800:  # stride downsample for charts, before json decode
+            step = -(-len(rows) // 800)
+            rows = rows[::step]
+        return [{"t": t, **json.loads(d)} for t, d in rows]
