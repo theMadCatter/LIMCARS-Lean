@@ -259,7 +259,7 @@ def test_llamacpp_upstream_names_mapped():
     assert c["prompt_tokens"] == 10000          # processed + cached: cached is a subset
     assert c["cached_tokens"] == 4000 and c["prefix_hits"] == 4000 and c["prefix_queries"] == 10000
     assert c["prefill_compute_tokens"] == 6000 and c["prefill_seconds"] == 3
-    assert c["gen_tokens"] == 1500 and c["decode_seconds"] == 30 and c["iterations"] == 1800
+    assert c["gen_tokens"] == 1500 and c["decode_seconds"] == 30 and c.get("iterations") is None
     assert c["draft_tokens"] == 800 and c["accepted_tokens"] == 600 and c["drafts"] == 200
     assert c["req_success"] is None             # upstream has no request counter
     assert all(v is None for v in D.read_hists(s, dial).values())

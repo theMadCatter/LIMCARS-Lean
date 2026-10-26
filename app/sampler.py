@@ -259,17 +259,19 @@ class EngineSampler(threading.Thread):
         stepped = ((gt is not None and gt_old is not None and gt > gt_old)
                    or (it is not None and it_old is not None and it > it_old))
         running = (row.get("running") or 0) > 0
-        if admitted or (running and not stepped):
+        # completion-charged engines (llama.cpp) have no live per-step signal,
+        # so "running but nothing moved" proves nothing there: admission only
+        if admitted or (running and not stepped
+                        and not dial.get("gen_completion_charged")):
             self._pf_last_move = now
         row["prefill_active"] = (now - self._pf_last_move) < 1.5
         if dial.get("gen_completion_charged"):
             # gen tokens land when a request finishes (llama.cpp): a per-tick
             # difference is a completion burst, not a speed. Pair them with the
-            # engine's own decode compute seconds; show "now" only while the
-            # engine is actually stepping.
+            # engine's own decode compute seconds; shown while requests run
+            # (no metric separates prefill from decode, so no phase is claimed).
             paired = self._paired_rate("gen_tokens", "decode_seconds")
-            moving = it is not None and it_old is not None and it > it_old
-            row["decode_tps_now"] = paired if moving else None
+            row["decode_tps_now"] = paired if running else None
         if (row.get("decode_tps_now") or 0) > 0:
             self._gen_last_move = now
         row["decode_active"] = (now - self._gen_last_move) < 1.5
