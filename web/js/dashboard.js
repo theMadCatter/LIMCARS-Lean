@@ -238,6 +238,7 @@ function adaptHwCharts(h) {
     for (const card of state.charts) {
       if (!card._fixedWin || !card._series) continue;
       for (const s of card._series) if (s.key.startsWith(from + '.')) s.key = hp + s.key.slice(from.length);
+      card._lastCur = null;          // never show the previous source's held reading
       card._chart && card._chart.mark();
     }
     state._hwPrefix = hp;
