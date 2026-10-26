@@ -427,10 +427,13 @@ class Handler(BaseHTTPRequestHandler):
         # window_s:"x" persisted and crashed boot on the next restart.
         if "pricing" in body and body["pricing"] is not None:
             pv = body["pricing"]
+            labels = ("display_name", "provider")
             if not isinstance(pv, dict) or any(
                     isinstance(v, bool) or not isinstance(v, (int, float))
-                    for v in pv.values()):
-                return self._err(400, "pricing must be a dict of numbers")
+                    for k, v in pv.items() if k not in labels) or any(
+                    not isinstance(pv[k], str) for k in labels if k in pv):
+                return self._err(400, "pricing must be a dict of numbers "
+                                      "(plus optional display_name/provider strings)")
         for k in ("window_s", "live_hz", "hw_hz"):
             if k in body:
                 try:
@@ -483,7 +486,8 @@ class Handler(BaseHTTPRequestHandler):
                     secs = min(secs, float(self.app.cfg.get(
                         "persist_seconds", 3600)) + 300)
             eng_snap = app.engines.snapshots(secs)
-            _model = next(iter(eng_snap.values()), {}).get("model")
+            _sel = (qs.get("engine") or [None])[0]
+            _model = (eng_snap.get(_sel) or next(iter(eng_snap.values()), {})).get("model")
             from . import pricing as _pr
             return self._json({
                 "ok": True, "version": VERSION,

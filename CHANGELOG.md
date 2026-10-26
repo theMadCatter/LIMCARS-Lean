@@ -1,5 +1,35 @@
 # Changelog
 
+## LIMCARS-Lean 0.2.0 — UX pass
+
+Visual design unchanged; additions only. No honesty-invariant change.
+
+- **Engine switcher**: the header engine pill opens a list of every configured
+  engine (shows ▾ only with 2+). Selection persists in the `limcars_ui` cookie and
+  `?engine=`; bubbles, charts and the pricing note follow it. `/api/snapshot`
+  accepts `engine=` to resolve that engine's pricing.
+- **Tab status**: title shows live decode speed + model; the favicon gets a
+  yellow (stale) / red (down) dot only when something is wrong.
+- **Toasts + in-page confirm** replace every native `alert()` / `confirm()`.
+- **Stale-data banner**: when the stream drops, the engine goes down, or no row
+  arrives for 10 s, a banner says how old the values are and live bubbles dim.
+- **Bubble tooltips** explain each figure and its rule (p50 only at n≥20,
+  cached ⊂ prompt, "at this rate" projections, synthetic minutes excluded).
+- **Phone layout**: display controls fold behind one ⚙️ button below 860 px;
+  wide tables scroll inside their card instead of widening the page.
+- **Pricing editor**: inline validation, Enter saves / Esc closes, saved toast.
+  Fixes two pre-existing bugs: blank write+out ("clear override") was blocked by
+  the old check, and the server rejected every save because the editor's
+  `display_name`/`provider` strings failed the numbers-only validation.
+- **Accessibility**: aria labels/states on icon buttons, popovers and window
+  pills; visible `:focus-visible` rings; arrow-key navigation in palette and
+  engine popovers; Esc returns focus.
+- **OS preferences**: theme follows `prefers-color-scheme` until the user picks
+  one; `prefers-reduced-motion` disables animations.
+- **Collapsible sidebar sections** (Panel settings, Live engines, Security,
+  Recipes), remembered per browser.
+- Cache stamps → `?v=20261026b`. `node --check` passes; `pytest` 44 passed.
+
 ## LIMCARS-Lean 0.1.0 — derived from LIMCARS @ `7c9098e`
 
 Optimization/cleanup pass only. No feature, API-shape, visual or honesty-invariant
