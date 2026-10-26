@@ -1175,9 +1175,7 @@ function rotateCategorical(arr, base, delta, aroundHue) {
   }
 }
 function applyTheme() {
-  // explicit choice wins; until the user picks one, follow the OS setting
-  const mode = uiPrefs.theme === 'light' || uiPrefs.theme === 'dark' ? uiPrefs.theme
-    : (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const mode = uiPrefs.theme === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.theme = mode;
   const base = PALETTES[uiPrefs.palette] || PALETTES.orange;
   const rs = document.documentElement.style;
@@ -1335,9 +1333,6 @@ wireThemeUi();
     });
   });
 })();
-if (window.matchMedia) matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
-  if (uiPrefs.theme !== 'light' && uiPrefs.theme !== 'dark') applyTheme();
-});
 (function wireHeaderTools() {
   const btn = document.getElementById('btn-tools'), box = document.getElementById('hdr-tools');
   if (!btn || !box) return;
