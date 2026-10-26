@@ -539,10 +539,15 @@ function refresh() {
               { times: rows.map(r => r[0]), fmt: sfmt });
       } else {
         const now = Date.now() / 1000;
-        // engines without the token-level series (Atlas) chart the step-level one
-        const key = ref.d.seriesAlt && l && l[ref.d.series] == null && l[ref.d.seriesAlt] != null
-          ? ref.d.seriesAlt : ref.d.series;
-        let rows = state.store.at(`${eng()}.${key}`).filter(([t]) => t >= now - 3600);
+        const hour = k => state.store.at(`${eng()}.${k}`).filter(([t]) => t >= now - 3600);
+        const has = rs => rs.some(([, v]) => v != null);
+        let rows = hour(ref.d.series);
+        // engines without the token-level series (Atlas) chart the step-level
+        // one — chosen by which series holds history, so idle gaps keep it
+        if (ref.d.seriesAlt && !has(rows)) {
+          const alt = hour(ref.d.seriesAlt);
+          if (has(alt)) rows = alt;
+        }
         const step = Math.max(1, Math.ceil(rows.length / 200));
         rows = rows.filter((_, i) => i % step === 0 || i === rows.length - 1);
         spark(ref.sp, rows.map(r => r[1]), ref.d.color,
