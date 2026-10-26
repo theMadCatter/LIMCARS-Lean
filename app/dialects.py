@@ -25,6 +25,10 @@ Map value forms (per logical):
     "metric_name"
     ["metric_name", "alt_name"]                 first non-null wins
     ["metric_name", {"mode": "prefill*"}]       label match; trailing * = prefix
+    {"sum": [spec, spec, ...]}                   first spec required, the rest
+                                                 added when present (llama.cpp
+                                                 splits prompt into processed +
+                                                 cached)
 
 Metric-name sources ported from TandemDash-Fork proxy/adapters/ (vllm, sglang,
 exl3, tensorfold), whose family names were verified against each upstream's
@@ -44,6 +48,11 @@ def _get(series: dict, spec, kind: str):
     """
     if spec is None:
         return None
+    if isinstance(spec, dict):
+        parts = [_get(series, p, kind) for p in spec["sum"]]
+        if parts[0] is None:
+            return None
+        return sum(p for p in parts if p is not None)
     if isinstance(spec, str):
         name, match, alts = spec, None, []
     else:
@@ -149,18 +158,44 @@ SGLANG = {
     },
 }
 
-# llama.cpp server metrics
+# llama.cpp server metrics (llama-server --metrics; ggml-org/llama.cpp
+# tools/server/server-task.cpp to_metrics()). Upstream facts this map relies on:
+# - prompt_tokens_total counts PROCESSED prompt tokens only; cache reuse is the
+#   separate prompt_tokens_cached_total. LIMCARS' prompt_tokens must include
+#   cached (cached is a subset), so prompt = processed + cached.
+# - tokens_predicted_total is the real name (predicted_tokens_total never
+#   existed upstream; kept as an alt so nothing that read it changes) and it,
+#   like the spec-decode counters, is charged when a request's slot is
+#   released — so decode speed is paired with tokens_predicted_seconds_total
+#   ("gen_completion_charged"), never a per-tick difference.
+# - prompt_seconds_total pairs exactly with the processed count for prefill.
+# - n_decode_total advances every llama_decode() call — the live step signal.
+# - kv_cache_usage_ratio (0-1) exists on older builds only; newer ones read None.
+# - no request counter and no histograms upstream: those stay None ("–").
+_LCPP_PROMPT = {"sum": ["llamacpp:prompt_tokens_total", "llamacpp:prompt_tokens_cached_total"]}
 LLAMACPP = {
     "kind": "llamacpp",
     "prefix": "llamacpp:",
+    "gen_completion_charged": True,
     "gauge": {
         "running": "llamacpp:requests_processing",
         "waiting": "llamacpp:requests_deferred",
+        "kv_pct": "llamacpp:kv_cache_usage_ratio",
     },
     "counter": {
-        "prompt_tokens": "llamacpp:prompt_tokens_total",
-        "gen_tokens": "llamacpp:predicted_tokens_total",
+        "prompt_tokens": _LCPP_PROMPT,
+        "cached_tokens": "llamacpp:prompt_tokens_cached_total",
+        "prefix_hits": "llamacpp:prompt_tokens_cached_total",
+        "prefix_queries": _LCPP_PROMPT,
+        "prefill_compute_tokens": "llamacpp:prompt_tokens_total",
+        "prefill_seconds": "llamacpp:prompt_seconds_total",
+        "gen_tokens": ["llamacpp:tokens_predicted_total", "llamacpp:predicted_tokens_total"],
+        "decode_seconds": "llamacpp:tokens_predicted_seconds_total",
+        "iterations": "llamacpp:n_decode_total",
         "req_success": "llamacpp:requests_completed",
+        "draft_tokens": "llamacpp:spec_decode_num_draft_tokens_total",
+        "accepted_tokens": "llamacpp:spec_decode_num_accepted_tokens_total",
+        "drafts": "llamacpp:spec_decode_num_drafts_total",
     },
     "hist": {},
 }
@@ -181,9 +216,12 @@ LLAMACPP = {
 # would subtract a lookup count from a token count and inflate prefill speed.
 # The token-count equivalent is `qse_prompt_tokens_cached_total` ("prompt
 # tokens restored from the state store"), so THAT is prefix_hits.
-# Consequence: `prefix_queries` has no single-counter counterpart (the engine
-# splits lookups into hits+misses), so cache_hit_pct reads None ("–") rather
-# than a fabricated ratio — the module's standing rule.
+# prefix_queries is qse_prompt_tokens_total (cached included): upstream
+# server/METRICS.md defines the hit rate as exactly cached/prompt tokens.
+# cached_tokens (savings split) is the same token count; contract 0.1.0 builds
+# lack it and fall back to qse_prefill_tokens_reused_total ("prompt tokens
+# restored from a snapshot"). Names verified against 0xBakeer/TandemLLM
+# server/metrics.py + server/METRICS.md on 2026-10-26.
 _TANDEM_MAP = {
     "gauge": {
         "running": ["tandemllm:requests_inflight", "qwen38:requests_inflight",
@@ -202,9 +240,13 @@ _TANDEM_MAP = {
         # this is the sampler's engine-native live-prefill path
         "prefill_tokens": ["qse_prefill_tokens_forwarded_total"],
         # TOKENS restored from cache — see the trap note above
-        "prefix_hits": ["qse_prompt_tokens_cached_total"],
+        "prefix_hits": ["qse_prompt_tokens_cached_total", "qse_prefill_tokens_reused_total"],
+        "prefix_queries": ["qse_prompt_tokens_total"],
+        "cached_tokens": ["qse_prompt_tokens_cached_total", "qse_prefill_tokens_reused_total"],
+        "proc_start": ["qse_engine_start_time_seconds"],
         "draft_tokens": ["qse_spec_decode_num_draft_tokens_total"],
         "accepted_tokens": ["qse_spec_decode_num_accepted_tokens_total"],
+        "drafts": ["qse_spec_decode_num_drafts_total"],
     },
     "hist": {
         "ttft": ["qse_time_to_first_token_seconds"],
