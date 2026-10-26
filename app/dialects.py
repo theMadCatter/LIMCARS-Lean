@@ -355,7 +355,48 @@ ATLAS = {
     },
 }
 
-DIALECTS = {d["kind"]: d for d in (VLLM, SGLANG, LLAMACPP, TANDEMLLM, EXL3, TENSORFOLD, ATLAS)}
+# LiteLLM proxy (BerriAI/litellm).
+#
+# The OSS LiteLLM proxy exposes a small set of Prometheus metrics; the
+# "granular per-request token / spend" family is Enterprise-only. The
+# dialect below covers everything a free install actually publishes:
+#
+#   litellm_requests_metric                     : gauge of in-flight requests
+#   litellm_proxy_total_requests_metric         : counter — all requests
+#   litellm_proxy_failed_requests_metric        : counter — failed subset
+#   litellm_request_total_latency_metric_bucket : histogram — total latency (s)
+#   litellm_llm_api_latency_metric_bucket       : histogram — upstream only
+#   litellm_deployment_successful_fallbacks     : counter
+#   litellm_deployment_failed_fallbacks         : counter
+#
+# What is NOT in OSS and therefore reads None ("–") in the dashboard:
+#   * prompt_tokens / gen_tokens / cached_tokens (Enterprise `litellm_input_tokens`
+#     / `litellm_output_tokens`)
+#   * $/spend  (Enterprise `litellm_spend_metric`)
+#   * KV cache % / prefill latency / spec decode — not relevant for a
+#     routing proxy, LiteLLM does not own these numbers.
+#
+# For spend and token-level visibility on OSS, call the proxy's
+# `/spend/logs` or `/global/spend/report` endpoints with the master key
+# (see app/litellm_proxy.py and /api/litellm/spend).
+LITELLM = {
+    "kind": "litellm",
+    "prefix": "litellm_",
+    "gauge": {
+        "running": "litellm_requests_metric",
+    },
+    "counter": {
+        "req_success": "litellm_proxy_total_requests_metric",
+        "req_failure": "litellm_proxy_failed_requests_metric",
+    },
+    "hist": {
+        "e2e": "litellm_request_total_latency_metric",
+        "ttft": "litellm_llm_api_latency_metric",   # closest OSS analogue
+    },
+}
+
+
+DIALECTS = {d["kind"]: d for d in (VLLM, SGLANG, LLAMACPP, TANDEMLLM, EXL3, TENSORFOLD, ATLAS, LITELLM)}
 
 
 def detect(body: str) -> str | None:
@@ -383,6 +424,13 @@ def detect(body: str) -> str | None:
     if ("\natlas_requests_" in probe or "\natlas_generation_tokens_total" in probe
             or probe.startswith("# HELP atlas_")):
         return "atlas"
+    # LiteLLM proxy — detected last on its own stable OSS metric names so a
+    # body that also mentions `litellm_*` labels inside another engine's
+    # help text (unlikely but possible) still resolves to that engine.
+    if ("\nlitellm_proxy_total_requests_metric" in probe
+            or "\nlitellm_requests_metric" in probe
+            or probe.startswith("# HELP litellm_")):
+        return "litellm"
     return None
 
 

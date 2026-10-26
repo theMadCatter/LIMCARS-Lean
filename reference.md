@@ -73,6 +73,7 @@ picking up this task start here before anything else.
 | #2 | `cursor/engine-auth-headers-01a8` | **merged** as `569e5c3` | per-engine API keys / auth headers; probe & engine-info now take `?engine=<id>`; tests |
 | #3 | `cursor/vllm-older-compat-01a8` | rebased onto post-#2 main (bottom of stack) | fallback metric names so vLLM 0.4/0.5 still populates KV + spec-decode; tests |
 | #4 | `cursor/http-status-tiles-01a8` | stacked on #3 | status tiles for ComfyUI (queue + system_stats) and generic HTTP health; sidebar section; tests |
+| #5 | `cursor/litellm-proxy-01a8` | stacked on #4 (top of stack) | LiteLLM proxy support: OSS metrics dialect + `/api/litellm/spend` admin aggregator; tests |
 
 ## Findings since the security pass
 
@@ -109,6 +110,19 @@ picking up this task start here before anything else.
   `_authorized()` gate, so an unauthenticated LAN client can't scan
   the owner's ancillary services. Thread stays idle when
   `status_tiles` is empty.
+- **F-13 LiteLLM proxy was unsupported** — nothing in the dialect
+  catalogue recognised a LiteLLM `/metrics` body, and even if it did,
+  LiteLLM's OSS Prometheus endpoint only exposes request counts +
+  latency histograms (prompt / completion tokens + spend are
+  Enterprise). Added a `litellm` dialect that reads the OSS metrics
+  correctly, honestly leaves token / spend logical fields as None,
+  and a new `app/litellm_proxy.py` that queries the admin REST API
+  (`/global/spend/report` → `/spend/logs` fallback) with the master
+  key for per-model spend / token totals. New endpoint:
+  `GET /api/litellm/spend?engine=&days=` — subject to the secure-by-
+  default auth gate like every other API route (bearer or cookie).
+  Documented the OSS vs Enterprise metric split in the README so no
+  one expects a token bubble to populate from a free-tier proxy.
 
 ## Work plan
 

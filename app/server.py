@@ -842,6 +842,42 @@ class Handler(BaseHTTPRequestHandler):
             # the most recent snapshot.
             return self._json({"tiles": self.app.status_tiles.snapshot(),
                                "at": time.time()})
+        m = re.fullmatch(r"/api/litellm/spend/?", path)
+        if m:
+            # LiteLLM proxy spend summary. Reads from any engine whose
+            # kind is 'litellm' (or an explicit ?engine=<id>), uses the
+            # master key configured on that engine entry (api_key /
+            # api_key_env). Enterprise metric coverage is documented in
+            # dialects.LITELLM — this endpoint is the OSS alternative
+            # for seeing per-model spend and token counts.
+            import os as _os
+            from . import litellm_proxy as _llm
+            engine_id = (qs.get("engine") or [None])[0]
+            smp = (self.app.engines.get(engine_id) if engine_id else None)
+            if smp is None:
+                for s in self.app.engines.all():
+                    # auto-pick the first litellm engine, same spirit as
+                    # the other "first configured" fallbacks
+                    if (s.kind or s.eng.get("kind")) == "litellm":
+                        smp = s
+                        break
+            if smp is None:
+                return self._err(400, "no LiteLLM engine configured")
+            key = (smp.eng.get("api_key")
+                   or _os.environ.get(smp.eng.get("api_key_env") or "")
+                   or self.app.cfg.get("litellm_master_key")
+                   or _os.environ.get("LITELLM_MASTER_KEY"))
+            if not key:
+                return self._err(400,
+                    "set api_key / api_key_env on the engine entry, "
+                    "or export LITELLM_MASTER_KEY")
+            try:
+                days = int((qs.get("days") or ["1"])[0])
+            except ValueError:
+                days = 1
+            days = max(1, min(90, days))
+            data = _llm.spend_summary(smp.url, key, days=days)
+            return self._json({"ok": True, **data})
         return self._err(404, "not found")
 
     # ---------------- panel settings (old dash_settings.json parity) ----------------
