@@ -1265,28 +1265,35 @@ function wireThemeUi() {
     { btn: document.getElementById('btn-bg'), pop: document.getElementById('bg-pop'),
       key: 'bg', attr: 'data-bg', withDefault: true },
   ];
-  const closeAll = () => pops.forEach(p => { if (p.pop) p.pop.hidden = true; });
+  const closeAll = () => pops.forEach(p => {
+    if (p.pop) p.pop.hidden = true;
+    if (p.btn) p.btn.setAttribute('aria-expanded', 'false');
+  });
   for (const P of pops) {
     if (!P.btn || !P.pop) continue;
     const openPop = () => {
       const sel = uiPrefs[P.key] || (P.withDefault ? 'default' : 'orange');
       const sw = (P.withDefault
-        ? `<button ${P.attr}="default" title="house default"` +
+        ? `<button ${P.attr}="default" title="house default" aria-label="house default"` +
           ` style="background:linear-gradient(135deg,#0b0e13,#121722)"` +
-          `${sel === 'default' ? ' class="sel"' : ''}></button>`
+          ` aria-pressed="${sel === 'default'}"${sel === 'default' ? ' class="sel"' : ''}></button>`
         : '') + Object.entries(PALETTES).map(([name, hex]) =>
-        `<button ${P.attr}="${name}" title="${name}" style="background:${hex}"` +
-        `${sel === name ? ' class="sel"' : ''}></button>`).join('');
+        `<button ${P.attr}="${name}" title="${name}" aria-label="${name}" style="background:${hex}"` +
+        ` aria-pressed="${sel === name}"${sel === name ? ' class="sel"' : ''}></button>`).join('');
       P.pop.innerHTML = sw;
       const r = P.btn.getBoundingClientRect();
       P.pop.style.top = (r.bottom + 6) + 'px';
       P.pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 210)) + 'px';
       closeAll();
       P.pop.hidden = false;
+      P.btn.setAttribute('aria-expanded', 'true');
     };
     P.btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (P.pop.hidden) openPop(); else P.pop.hidden = true;
+      if (P.pop.hidden) {
+        openPop();
+        if (e.detail === 0) P.pop.querySelector('.sel, button')?.focus();   // opened from keyboard
+      } else closeAll();
     });
     P.pop.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1295,6 +1302,17 @@ function wireThemeUi() {
       uiPrefs = writeUiPrefs({ [P.key]: b.getAttribute(P.attr) });
       applyTheme();
       openPop();           // refresh the selection ring
+      P.pop.querySelector('.sel')?.focus();
+    });
+    // keyboard: arrows walk the 6-column swatch grid, Esc returns to the button
+    P.pop.addEventListener('keydown', (e) => {
+      const items = [...P.pop.querySelectorAll('button')];
+      const i = items.indexOf(document.activeElement);
+      const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 6, ArrowUp: -6 }[e.key];
+      if (step && i >= 0) {
+        e.preventDefault();
+        items[Math.max(0, Math.min(items.length - 1, i + step))].focus();
+      } else if (e.key === 'Escape') { e.stopPropagation(); closeAll(); P.btn.focus(); }
     });
   }
   document.addEventListener('click', closeAll);
@@ -1307,8 +1325,7 @@ wireThemeUi();
   if (!btn || !box) return;
   const set = open => { box.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); };
   btn.addEventListener('click', e => { e.stopPropagation(); set(!box.classList.contains('open')); });
-  box.addEventListener('click', e => e.stopPropagation());
-  document.addEventListener('click', () => set(false));
+  document.addEventListener('click', e => { if (!box.contains(e.target)) set(false); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') set(false); });
 })();
 window.__setTheme = (p, b) => {   // test hook: recolor without page reload
@@ -1416,7 +1433,8 @@ setInterval(fetchCacheLife, 60000);
 
 document.querySelectorAll('[data-win]').forEach(btn => btn.addEventListener('click', async () => {
   state.windowSec = +btn.dataset.win;
-  document.querySelectorAll('[data-win]').forEach(b => b.classList.toggle('on', b === btn));
+  document.querySelectorAll('[data-win]').forEach(b => {
+    b.classList.toggle('on', b === btn); b.setAttribute('aria-pressed', String(b === btn)); });
   const label = { 180: '3 min', 900: '15 min', 3600: '1 h' }[state.windowSec];
   document.querySelector('#win-label').textContent = 'last ' + label;
   document.querySelectorAll('#charts-grid .w').forEach(w => w.textContent = label);

@@ -16,23 +16,23 @@
   <div id="engine-pop" class="engine-pop" role="listbox" aria-label="Engines" hidden></div>
   <div class="spacer"></div>
   <span class="muted small charts-label">Charts</span>
-  <button class="pill" data-win="180">3 min</button>
-  <button class="pill on" data-win="900">15 min</button>
-  <button class="pill" data-win="3600">1 h</button>
+  <button class="pill" data-win="180" aria-pressed="false">3 min</button>
+  <button class="pill on" data-win="900" aria-pressed="true">15 min</button>
+  <button class="pill" data-win="3600" aria-pressed="false">1 h</button>
   <div class="hdr-tools" id="hdr-tools">
-  <select class="pill" id="refresh-sel" title="UI refresh interval (shared setting)" style="appearance:auto">
+  <select class="pill" id="refresh-sel" aria-label="UI refresh interval" title="UI refresh interval (shared setting)" style="appearance:auto">
     <option value="0.5">0.5 s</option><option value="1" selected>1 s</option>
     <option value="2">2 s</option><option value="3">3 s</option><option value="5">5 s</option>
   </select>
-  <button class="pill" id="btn-theme" title="Day / night theme">🌙</button>
-  <button class="pill" id="btn-palette" title="Accent palette">🎨</button>
+  <button class="pill" id="btn-theme" title="Day / night theme" aria-label="Toggle day / night theme">🌙</button>
+  <button class="pill" id="btn-palette" title="Accent palette" aria-label="Accent color" aria-haspopup="true" aria-expanded="false">🎨</button>
   <div id="palette-pop" class="palette-pop" hidden></div>
-  <button class="pill" id="btn-bg" title="Page tint theme">🖼️</button>
+  <button class="pill" id="btn-bg" title="Page tint theme" aria-label="Page tint" aria-haspopup="true" aria-expanded="false">🖼️</button>
   <div id="bg-pop" class="palette-pop" hidden></div>
-  <button class="pill" id="btn-refresh" title="Re-pull the snapshot now">↻</button>
+  <button class="pill" id="btn-refresh" title="Re-pull the snapshot now" aria-label="Reload data now">↻</button>
   </div>
   <button class="pill" id="btn-tools" title="Display settings" aria-label="Display settings" aria-haspopup="true" aria-expanded="false" aria-controls="hdr-tools">⚙️</button>
-  <span class="pill"><span id="conn-dot" class="dot"></span><span id="conn-txt">…</span></span>
+  <span class="pill"><span id="conn-dot" class="dot"></span><span id="conn-txt" aria-live="polite">…</span></span>
 </header>
 
 <div class="dash-layout">
