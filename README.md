@@ -1,4 +1,10 @@
-# 🚗 LIMCARS
+# 🚗 LIMCARS-Lean
+
+> **LIMCARS-Lean** is an optimized, cleaned-up derivative of
+> [LIMCARS](https://github.com/AgentSparko/LIMCARS) (imported at `7c9098e`).
+> Same dashboard, same behavior, same honesty invariants — leaner backend hot
+> paths, gzipped static assets and less dead code. See [CHANGELOG.md](CHANGELOG.md).
+> Everything below describes LIMCARS and applies unchanged.
 
 **L**ocal **I**nference **M**onitor · **C**ost **A**nalyzer · **R**ecipe **S**erver
 
@@ -108,9 +114,9 @@ happily plot. 🧮
 ## 🚀 Quick start
 
 ```bash
-git clone https://github.com/AgentSparko/LIMCARS.git
-cd LIMCARS
-python3 -m pytest tests/ -q     # optional sanity check — 23 tests, instant
+git clone https://github.com/AgentSparko/LIMCARS-Lean.git
+cd LIMCARS-Lean
+python3 -m pytest tests/ -q     # optional sanity check — 44 tests, instant
 python3 -m app                  # open http://localhost:8951 🎉
 ```
 
@@ -150,7 +156,7 @@ Watch it with `systemctl status limcars` or `journalctl -u limcars -f`.
 ```bash
 crontab -e
 # add one line:
-@reboot cd /path/to/LIMCARS && /usr/bin/python3 -m app >> data/server.log 2>&1
+@reboot cd /path/to/LIMCARS-Lean && /usr/bin/python3 -m app >> data/server.log 2>&1
 ```
 
 Want a dry run before installing anything system-wide?
@@ -203,4 +209,4 @@ engine name + `/metrics` snippet are extra welcome. 🙏
 
 ## 📜 License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Derived from LIMCARS by AgentSparko; the original license is kept as-is.
