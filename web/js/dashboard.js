@@ -74,8 +74,12 @@ const SIDE_TILES = [
   ['GPU temp', h => [h.gpu_temp_c != null ? h.gpu_temp_c.toFixed(0) + ' °C' : '–']],
   ['GPU power', h => [h.gpu_power_w != null ? h.gpu_power_w.toFixed(1) + ' W' : '–']],
   ['GPU clock', h => [h.gpu_clock_mhz != null ? num(h.gpu_clock_mhz) + ' MHz' : '–']],
-  ['Unified RAM', h => [h.mem_total_gb != null ? (h.mem_total_gb - h.mem_used_gb).toFixed(1) + ' GB free' : '–']],
+  [h => h.vram_total_gb ? 'System RAM' : 'Unified RAM',
+   h => [h.mem_total_gb != null ? (h.mem_total_gb - h.mem_used_gb).toFixed(1) + ' GB free' : '–']],
   ['SSD free', h => [h.disk_total_gb != null ? (h.disk_total_gb - h.disk_used_gb).toFixed(0) + ' GB free' : '–']],
+  // discrete GPUs only (hidden on unified-memory boxes like the DGX Spark)
+  ['VRAM', h => [h.vram_total_gb ? (h.vram_total_gb - h.vram_used_gb).toFixed(1) + ' GB free'
+                   + ` of ${Math.round(h.vram_total_gb)}` : '–'], { wide: true, vram: true }],
   // duo/wide: down and up shown side by side in a full-row tile (user ask:
   // not stacked — one after another, double width)
   ['Net traffic', h => h.net_r_mbs != null
@@ -159,12 +163,86 @@ function buildCards() {
     cardRefs.push({ el, d, hero: true, v: el.querySelector('.v'), sub: el.querySelector('.sub'), sp: el.querySelector('.spark') });
   }
   document.querySelector('#side-tiles').innerHTML = SIDE_TILES.map(([l, , opt]) =>
-    `<div class="st${opt?.wide ? ' wide' : ''}${opt?.duo ? ' duo' : ''}"><div class="l">${l}</div><div class="v">–</div></div>`).join('');
+    `<div class="st${opt?.wide ? ' wide' : ''}${opt?.duo ? ' duo' : ''}"${opt?.vram && !hwLatest().vram_total_gb ? ' hidden' : ''}>` +
+    `<div class="l">${typeof l === 'function' ? l(hwLatest()) : l}</div><div class="v">–</div></div>`).join('');
   const p = state.pricing;
   document.querySelector('#pricing-note').textContent = p
     ? `· vs ${p.display_name || p.slug || 'API'} @ $${p.cache_write} w / $${p.cache_read} read / $${p.output} out per Mtok` +
       (p.provider ? ` (${p.provider})` : '') + (p.fetched_at ? ` · prices ${String(p.fetched_at).slice(0, 10)}` : '')
     : '· no pricing entry for this model';
+}
+
+function sideChart(host, series, fmtFn, chartOpts = {}) {
+  // user rule: hw side charts always show last 3 min — more relevant than
+  // following the global window button
+  const c = new LineChart(host, { store: state.store, window: 180, h: 110, series, ...chartOpts });
+  const card = host.closest('.side-chart');
+  card._fixedWin = true;
+  if (chartOpts.autoY === false) {   // user choice: power & RAM default to the
+    c.setAutoY(false);               // 0..physical-max view
+    card.querySelector('.autoy').classList.remove('on');
+  }
+  card.querySelector('.autoy').addEventListener('click', () => {
+    const on = c.autoY ? false : true; c.setAutoY(on);
+    card.querySelector('.autoy').classList.toggle('on', on);
+  });
+  card._chart = c; card._series = series; card._cur = card.querySelector('.cur'); card._fmt = fmtFn;
+  state.charts.push(card);
+  return c;
+}
+
+// Discrete-GPU boxes: RAM and VRAM get separate charts, and 2+ cards get one
+// chart each. Unified-memory boxes (DGX Spark) keep the original sidebar.
+let gpuSig = null;
+function ensureGpuCards() {
+  const h = hwLatest();
+  const n = h.gpu_count || 0, vram = !!h.vram_total_gb;
+  const sig = `${n}:${vram}`;
+  const ramCard = document.querySelector('#sch-ram')?.closest('.side-chart');
+  if (sig === gpuSig || !ramCard) return;
+  gpuSig = sig;
+  document.querySelectorAll('.gpu-dyn').forEach(c => {
+    state.charts = state.charts.filter(x => x !== c); c.remove(); });
+  let after = ramCard;
+  const add = (id, title, series, fmtFn, opts) => {
+    const card = document.createElement('div');
+    card.className = 'chart-card side-chart gpu-dyn';
+    card.innerHTML = `<div class="head"><span class="title"></span><span class="cur"></span>
+      <button class="pill tiny autoy on">AUTO Y</button></div><div id="${id}"></div>`;
+    card.querySelector('.title').textContent = title;
+    after.after(card); after = card;
+    sideChart(card.querySelector('#' + id), series, fmtFn, opts);
+  };
+  if (vram) add('sch-vram', 'VRAM (GB) · last 3 min',
+    [{ key: 'hw.vram_used_gb', label: 'GB used', color: () => COLORS.violet, fill: true }],
+    v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: h.vram_total_gb, autoY: false });
+  if (n > 1) {
+    const gpus = state.hw.gpus || [];
+    for (let i = 0; i < n; i++) {
+      const series = [{ key: `hw.gpu${i}_util`, label: 'util %', color: () => COLORS.cobalt, fill: true }];
+      if (vram) series.push({ key: `hw.gpu${i}_mem_pct`, label: 'VRAM %', color: () => COLORS.violet });
+      add(`sch-gpu${i}`, `GPU ${i}${gpus[i] ? ' · ' + gpus[i].name : ''} · util${vram ? ' + VRAM' : ''} % · last 3 min`,
+          series, v => v != null ? Math.round(v) + '%' : '', { yCeil: 100 });
+    }
+  }
+}
+// Titles and physical ceilings follow the detected hardware; on a Spark
+// (no VRAM, no power limit reported) they stay exactly as before.
+function adaptHwCharts(h) {
+  ensureGpuCards();
+  const discrete = !!h.vram_total_gb, many = (h.gpu_count || 0) > 1;
+  const set = (sel, title, ceil) => {
+    const card = document.querySelector(sel)?.closest('.side-chart');
+    if (!card) return;
+    const t = card.querySelector('.title');
+    if (t.textContent !== title) t.textContent = title;
+    if (card._chart && ceil && card._chart.yCeil !== ceil) { card._chart.yCeil = ceil; card._chart.mark(); }
+  };
+  set('#sch-ram', `${discrete ? 'System' : 'Unified'} RAM (GB) · last 3 min`,
+      discrete && h.mem_total_gb ? Math.ceil(h.mem_total_gb) : 128);
+  set('#sch-power', `GPU power${many ? ' · all cards' : ''} · last 3 min`,
+      h.gpu_power_limit_w ? Math.ceil(h.gpu_power_limit_w) : 110);
+  set('#sch-temp', `Temperature (CPU + GPU${many ? ' max' : ''}) · last 3 min`, 100);
 }
 
 function buildCharts() {
@@ -227,24 +305,7 @@ function buildCharts() {
   });
   renderClientChart();
 
-  const side = (hostSel, series, fmtFn, chartOpts = {}) => {
-    const host = document.querySelector(hostSel);
-    // user rule: hw side charts always show last 3 min — more relevant than
-    // following the global window button
-    const c = new LineChart(host, { store: st, window: 180, h: 110, series, ...chartOpts });
-    const card = host.closest('.side-chart');
-    card._fixedWin = true;
-    if (chartOpts.autoY === false) {   // user choice: power & RAM default to the
-      c.setAutoY(false);               // 0..physical-max view
-      card.querySelector('.autoy').classList.remove('on');
-    }
-    card.querySelector('.autoy').addEventListener('click', () => {
-      const on = c.autoY ? false : true; c.setAutoY(on);
-      card.querySelector('.autoy').classList.toggle('on', on);
-    });
-    card._chart = c; card._series = series; card._cur = card.querySelector('.cur'); card._fmt = fmtFn;
-    state.charts.push(card);
-  };
+  const side = (sel, ...args) => sideChart(document.querySelector(sel), ...args);
   // yCeil = physical maximum: with AUTO Y OFF the view is 0..ceiling (real
   // amplitude vs the hardware range); ON zooms to the data extremes.
   side('#sch-power', [{ key: 'hw.gpu_power_w', label: 'W', color: () => COLORS.cobalt, fill: true }], v => v != null ? v.toFixed(1) + ' W' : '', { yCeil: 110, autoY: false });
@@ -253,6 +314,8 @@ function buildCharts() {
   side('#sch-clock', [{ key: 'hw.gpu_clock_mhz', label: 'MHz', color: () => COLORS.teal, fill: true }], v => v != null ? Math.round(v) + ' MHz' : '', { yCeil: 3003 });
   side('#sch-ram', [{ key: 'hw.mem_used_gb', label: 'GB used', color: () => COLORS.rose, fill: true }],
     v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: 128, autoY: false });
+  gpuSig = null;
+  ensureGpuCards();
 }
 
 // ---------------- toasts + in-page confirm (no blocking alert/confirm) ----------------
@@ -470,6 +533,9 @@ function refresh() {
   const h = hwLatest();
   document.querySelectorAll('#side-tiles .st').forEach((el, i) => {
     const vals = SIDE_TILES[i][1](h);
+    const [lbl, , opt] = SIDE_TILES[i];
+    if (typeof lbl === 'function') el.querySelector('.l').textContent = lbl(h);
+    if (opt?.vram) el.hidden = !h.vram_total_gb;
     const vEl = el.querySelector('.v');
     if (SIDE_TILES[i][2]?.duo) {
       vEl.innerHTML = vals.map(s => `<span>${s}</span>`).join('');
@@ -496,6 +562,7 @@ function refresh() {
   document.querySelector('#engine-caret').hidden = Object.keys(state.engines).length < 2;
   updateTabStatus(meta);
   renderStaleBanner(meta);
+  adaptHwCharts(hwLatest());
   renderModelTable();
 }
 
