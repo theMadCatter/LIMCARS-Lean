@@ -130,7 +130,11 @@ const e2eHourBasis = l => histBasis(l, 'e2e');
 // selected engine (header switcher; ?engine= > cookie > first configured)
 const eng = () => (state.sel && state.engines[state.sel]) ? state.sel : Object.keys(state.engines)[0];
 const latest = () => (state.engines[eng()] || {}).latest || {};
-const hwLatest = () => state.hw.latest || {};
+// sidebar hardware source: this box, or a cluster node picked in the sidebar
+const hwNode = () => (state.nodeSel && state.nodes && state.nodes[state.nodeSel]) || null;
+const hwPrefix = () => hwNode() ? `hw@${state.nodeSel}` : 'hw';
+const hwSrc = () => hwNode() || state.hw || {};
+const hwLatest = () => hwSrc().latest || {};
 
 const cardRefs = [];
 
@@ -197,7 +201,7 @@ let gpuSig = null;
 function ensureGpuCards() {
   const h = hwLatest();
   const n = h.gpu_count || 0, vram = !!h.vram_total_gb;
-  const sig = `${n}:${vram}`;
+  const hp = hwPrefix(), sig = `${hp}:${n}:${vram}`;
   const ramCard = document.querySelector('#sch-ram')?.closest('.side-chart');
   if (sig === gpuSig || !ramCard) return;
   gpuSig = sig;
@@ -214,13 +218,13 @@ function ensureGpuCards() {
     sideChart(card.querySelector('#' + id), series, fmtFn, opts);
   };
   if (vram) add('sch-vram', 'VRAM (GB) · last 3 min',
-    [{ key: 'hw.vram_used_gb', label: 'GB used', color: () => COLORS.violet, fill: true }],
+    [{ key: `${hp}.vram_used_gb`, label: 'GB used', color: () => COLORS.violet, fill: true }],
     v => v != null ? v.toFixed(1) + ' GB' : '', { yCeil: h.vram_total_gb, autoY: false });
   if (n > 1) {
-    const gpus = state.hw.gpus || [];
+    const gpus = hwSrc().gpus || [];
     for (let i = 0; i < n; i++) {
-      const series = [{ key: `hw.gpu${i}_util`, label: 'util %', color: () => COLORS.cobalt, fill: true }];
-      if (vram) series.push({ key: `hw.gpu${i}_mem_pct`, label: 'VRAM %', color: () => COLORS.violet });
+      const series = [{ key: `${hp}.gpu${i}_util`, label: 'util %', color: () => COLORS.cobalt, fill: true }];
+      if (vram) series.push({ key: `${hp}.gpu${i}_mem_pct`, label: 'VRAM %', color: () => COLORS.violet });
       add(`sch-gpu${i}`, `GPU ${i}${gpus[i] ? ' · ' + gpus[i].name : ''} · util${vram ? ' + VRAM' : ''} % · last 3 min`,
           series, v => v != null ? Math.round(v) + '%' : '', { yCeil: 100 });
     }
@@ -229,6 +233,15 @@ function ensureGpuCards() {
 // Titles and physical ceilings follow the detected hardware; on a Spark
 // (no VRAM, no power limit reported) they stay exactly as before.
 function adaptHwCharts(h) {
+  const hp = hwPrefix(), from = state._hwPrefix || 'hw';
+  if (hp !== from) {                 // node picker changed: retarget the fixed side charts
+    for (const card of state.charts) {
+      if (!card._fixedWin || !card._series) continue;
+      for (const s of card._series) if (s.key.startsWith(from + '.')) s.key = hp + s.key.slice(from.length);
+      card._chart && card._chart.mark();
+    }
+    state._hwPrefix = hp;
+  }
   ensureGpuCards();
   const discrete = !!h.vram_total_gb, many = (h.gpu_count || 0) > 1;
   const set = (sel, title, ceil) => {
@@ -530,6 +543,7 @@ function refresh() {
     }
   }
   // side tiles
+  renderNodePicker();
   const h = hwLatest();
   document.querySelectorAll('#side-tiles .st').forEach((el, i) => {
     const vals = SIDE_TILES[i][1](h);
@@ -677,6 +691,7 @@ async function seed(reseedWindow = true) {
   }
   state.hw = snap.hw || {};
   for (const [k, rows] of Object.entries(snap.hw?.series || {})) state.store.seed(`hw.${k}`, rows);
+  seedNodes(snap);
   state.lastHwSeed = Date.now();
   state.pricing = snap.pricing;
   if (reseedWindow) {
@@ -692,11 +707,19 @@ async function seed(reseedWindow = true) {
 // costs one cheap GET and NEVER restarts a chart from 0 — it backfills the
 // window the SSE stream missed (whitelist gaps, server restarts, zombie
 // sockets where reader.read() hangs forever without erroring).
+function seedNodes(snap) {
+  state.nodes = state.nodes || {};
+  for (const [id, n] of Object.entries(snap.nodes || {})) {
+    state.nodes[id] = Object.assign(state.nodes[id] || {}, n);
+    for (const [k, rows] of Object.entries(n.series || {})) state.store.seed(`hw@${id}.${k}`, rows);
+  }
+}
 async function hwResync() {
   try {
     const snap = await (await fetch('/api/snapshot?seconds=210')).json();
     if (snap && snap.hw && snap.hw.series)
       for (const [k, rows] of Object.entries(snap.hw.series)) state.store.seed(`hw.${k}`, rows);
+    if (snap) seedNodes(snap);
     state.lastHwSeed = Date.now();
   } catch { /* server briefly down — the 30 s watchdog retries */ }
 }
@@ -715,7 +738,8 @@ setInterval(() => {
 
 const lastId = {};
 async function connect() {
-  const topics = ['hw', 'requests', 'events', ...Object.keys(state.engines).map(id => `engine:${id}`)].join(',');
+  const topics = ['hw', 'requests', 'events', ...Object.keys(state.engines).map(id => `engine:${id}`),
+                  ...Object.keys(state.nodes || {}).map(id => `hw:${id}`)].join(',');
   // self-heal on (re)connect: hw series come back from the SERVER rings, so a
   // reconnect after a server restart or a dropped socket never starts charts
   // from 0
@@ -759,6 +783,12 @@ async function connect() {
           // 'again the RAM chart does not SHOW the chart')
           for (const [k, v] of Object.entries(o))
             if (k !== 't' && typeof v === 'number') state.store.push(`hw.${k}`, o.t, v);
+        } else if (ev.startsWith('hw:')) {
+          const nid = ev.slice(3), n = state.nodes && state.nodes[nid];
+          if (!n) continue;
+          n.latest = o; n.alive = true; n.error = null;
+          for (const [k, v] of Object.entries(o))
+            if (k !== 't' && typeof v === 'number') state.store.push(`hw@${nid}.${k}`, o.t, v);
         } else if (ev.startsWith('engine:')) {
           const id_ = ev.slice(7);
           const e = state.engines[id_]; if (!e) continue;
@@ -769,6 +799,9 @@ async function connect() {
                            'e2e_p50_ms','cache_hit_pct','spec_accept_pct','spec_accept_len',
                            'draft_tok_per_step','gen_peak','prompt_total','gen_total'])
             state.store.push(`${id_}.${k}`, o.t, o[k]);
+        } else if (ev === 'events' && o.type === 'node_down') {
+          const n = state.nodes && state.nodes[o.node];
+          if (n) { n.alive = false; n.error = o.error; }
         } else if (ev === 'events' && o.type === 'engine_down') {
           const e = state.engines[o.engine];
           if (e && e.meta) e.meta.alive = false;
@@ -1659,10 +1692,39 @@ function wireEngineSwitcher() {
 }
 wireEngineSwitcher();
 
+// ---------------- cluster node picker (agentless SSH nodes, config `nodes`) ----------------
+
+function renderNodePicker() {
+  const host = document.querySelector('#node-pick'), err = document.querySelector('#node-err');
+  if (!host) return;
+  const ids = Object.keys(state.nodes || {});
+  host.hidden = !ids.length;
+  const sel = hwNode() ? state.nodeSel : null;
+  const sig = sel + '|' + ids.map(id => id + (state.nodes[id].alive ? '+' : '-')).join(',');
+  if (ids.length && host._sig !== sig) {
+    host._sig = sig;
+    host.innerHTML = [[null, 'this box', true], ...ids.map(id => [id, id, state.nodes[id].alive])]
+      .map(([id, label, up]) =>
+        `<button class="pill tiny${id === sel ? ' on' : ''}" data-node="${escH(id ?? '')}" aria-pressed="${id === sel}">` +
+        `<span class="dot ${up ? 'up' : 'down'}"></span>${escH(label)}</button>`).join('');
+  }
+  const n = hwNode();
+  err.hidden = !(n && !n.alive);
+  if (n && !n.alive) err.textContent = `⚠ ${sel} unreachable over SSH — ${n.error || 'no response yet'}`;
+}
+document.querySelector('#node-pick').addEventListener('click', e => {
+  const b = e.target.closest('button[data-node]');
+  if (!b) return;
+  state.nodeSel = b.dataset.node || null;
+  uiPrefs = writeUiPrefs({ node: state.nodeSel });
+  refresh();
+});
+
 // ---------------- boot ----------------
 
 (async () => {
   state.sel = new URLSearchParams(location.search).get('engine') || uiPrefs.engine || null;
+  state.nodeSel = uiPrefs.node || null;
   try {
     await seed();
   } catch (e) {

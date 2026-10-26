@@ -6,8 +6,8 @@
 <title>🏎️ LIMCARS — Local Inference Monitor · Cost Analyzer · Recipe Server</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
-<link rel="stylesheet" href="/css/style.css?v=20261026e">
-<link rel="stylesheet" href="/css/dashboard.css?v=20261026e">
+<link rel="stylesheet" href="/css/style.css?v=20261026f">
+<link rel="stylesheet" href="/css/dashboard.css?v=20261026f">
 </head>
 <body>
 <header class="top">
@@ -38,6 +38,8 @@
 <div class="dash-layout">
   <!-- LEFT SIDEBAR: system -->
   <aside class="side">
+    <div id="node-pick" class="node-pick" role="group" aria-label="Hardware source" hidden></div>
+    <div id="node-err" class="small node-err" role="status" hidden></div>
     <div class="side-tiles" id="side-tiles"></div>
     <div class="chart-card side-chart"><div class="head"><span class="title">GPU power · last 3 min</span>
       <span class="cur" id="cur-gpu-power"></span><button class="pill tiny autoy on">AUTO Y</button></div>
@@ -154,6 +156,6 @@
   </main>
 </div>
 
-<script type="module" src="/js/dashboard.js?v=20261026e"></script>
+<script type="module" src="/js/dashboard.js?v=20261026f"></script>
 </body>
 </html>

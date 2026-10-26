@@ -131,6 +131,17 @@ def _hwmon_temp() -> dict:
     return temps
 
 
+_BASE_KEYS = ("cpu_pct", "cpu_temp_c", "load1", "load5", "mem_used_gb", "mem_total_gb",
+              "mem_avail_gb", "swap_used_gb", "gpu_util", "gpu_temp_c",
+              "gpu_power_w", "gpu_clock_mhz", "disk_r_mbs", "disk_w_mbs",
+              "net_r_mbs", "net_w_mbs")
+
+
+def series_keys(last: dict) -> tuple:
+    """Charted keys: the fixed set plus whatever gpu*/vram* keys this box has."""
+    return _BASE_KEYS + tuple(k for k in last if k.startswith(("gpu", "vram")) and k not in _BASE_KEYS)
+
+
 class HwSampler(threading.Thread):
     daemon = True
 
@@ -151,12 +162,7 @@ class HwSampler(threading.Thread):
 
     def snapshot(self, seconds: float | None = None) -> dict:
         rows = self.ring.all() if seconds is None else self.ring.window(seconds)
-        keys = ("cpu_pct", "cpu_temp_c", "load1", "load5", "mem_used_gb", "mem_total_gb",
-                "mem_avail_gb", "swap_used_gb", "gpu_util", "gpu_temp_c",
-                "gpu_power_w", "gpu_clock_mhz", "disk_r_mbs", "disk_w_mbs",
-                "net_r_mbs", "net_w_mbs")
-        last = self.ring.last() or {}
-        keys += tuple(k for k in last if k.startswith(("gpu", "vram")) and k not in keys)
+        keys = series_keys(self.ring.last() or {})
         return {"hz": self.hz, "latest": self.ring.last(), "gpus": self.gpus,
                 "series": {k: [[t, r.get(k)] for t, r in rows] for k in keys}}
 

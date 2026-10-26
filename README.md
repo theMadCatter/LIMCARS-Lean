@@ -201,6 +201,25 @@ Everything stays on your box. `data/` (history, settings, recipes, password
 hash, logs) is gitignored and never leaves the machine. LIMCARS makes no
 outbound requests except to the inference engines you point it at. 🏠
 
+## 🖧 Cluster nodes (agentless)
+
+Watch the hardware of other machines (e.g. every DGX Spark in a cluster)
+without installing anything on them: list them in `data/config.json` and pick
+one in the sidebar's node selector.
+
+```json
+"nodes": [
+  {"id": "spark-2", "ssh": "user@spark-2.local"},
+  {"id": "spark-3", "ssh": "user@10.0.0.13", "ssh_opts": ["-p", "2222"]}
+]
+```
+
+Requirements: `sshd` on the node and key-based (passwordless) login from the
+LIMCARS box — check with `ssh -o BatchMode=yes user@host true`. LIMCARS keeps
+one persistent SSH connection per node and once a second pipes a short
+`sh` script that reads `/proc`, `df`, hwmon and `nvidia-smi`. An unreachable
+node shows its SSH error in the sidebar and is retried every ~5 s.
+
 ## 🤝 Contributing
 
 Fork → branch → `python3 -m pytest tests/ -q` before opening a PR — dialects,
