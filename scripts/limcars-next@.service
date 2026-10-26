@@ -1,18 +1,40 @@
 [Unit]
-Description=LIMCARS live inference observability (2 Hz sampler + SSE dash) — instance for user %i
+Description=LIMCARS Lean — live inference observability (2 Hz sampler + SSE dash) for %i
+# `After=` only; `Wants=` would hold up every boot waiting for one. docker
+# is a soft dependency: if the user's engines run under docker, let it be
+# there before we probe; if not, nothing breaks.
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=/home/%i/projects/limcars-next
-ExecStart=/usr/bin/env bash /home/%i/projects/limcars-next/scripts/start.sh
+# The install docs below rewrite BOTH of these when the user runs
+# scripts/install-systemd.sh — the old hardcoded /home/%i/projects/… path
+# only matched one specific maintainer's layout and left every other user
+# with a failed-to-start unit.
+WorkingDirectory=/opt/LIMCARS-Lean
+ExecStart=/usr/bin/env bash /opt/LIMCARS-Lean/scripts/start.sh
 Restart=on-failure
 RestartSec=3
 Nice=5
+# Light sandboxing. These are non-controversial on a service that only
+# touches its own `data/` dir: no new privileges, no setuid, /tmp isolated
+# from the rest of the system. Loosen them in a drop-in if a recipe
+# genuinely needs system-wide write access.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+# Allow reading / writing the data/ directory under the repo. The
+# ProtectHome=read-only line above would otherwise block updates to it
+# when the repo lives under /home/<user>/.
+ReadWritePaths=/opt/LIMCARS-Lean/data
 
 [Install]
 WantedBy=multi-user.target
-# Usage: systemctl enable --now limcars-next@<youruser>.service
-# (adjust WorkingDirectory if the repo does not live under /home/<user>)
+# Usage (system-wide):
+#   sudo cp scripts/limcars-next@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now limcars-next@<youruser>.service
+# For a per-user install (no sudo), see scripts/install-user-systemd.sh.

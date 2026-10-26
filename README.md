@@ -118,8 +118,8 @@ happily plot. 🧮
 ```bash
 git clone https://github.com/AgentSparko/LIMCARS-Lean.git
 cd LIMCARS-Lean
-python3 -m pytest tests/ -q     # optional sanity check — 44 tests, instant
-python3 -m app                  # open http://localhost:8951 🎉
+python3 -m pytest tests/ -q     # optional sanity check (dialects, auth, security)
+python3 -m app                  # open http://127.0.0.1:8951 🎉
 ```
 
 **Requirements:** Python ≥ 3.10 and `pip install psutil` — that's it. Linux,
@@ -136,22 +136,43 @@ Handy environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LIMCARS_HOST` | `0.0.0.0` | bind address (`127.0.0.1` = local-only) |
+| `LIMCARS_HOST` | `127.0.0.1` | bind address — `0.0.0.0` for LAN (requires auth; see Security) |
 | `LIMCARS_PORT` | `8951` | dashboard port |
 | `LIMCARS_DB` | `data/limcars.db` | history database path |
+| `LIMCARS_TOKEN` | *(unset)* | bearer token for the HTTP API and the login page |
+| `LIMCARS_ALLOW_EXEC` | `0` | flip to `1` to enable recipes / services / live-engine kill / probe |
 
 ## 🔁 Autorun — survive reboots, forget about it
 
-### systemd (recommended)
+### systemd (per-user, no sudo) — recommended
 
 ```bash
-sudo cp scripts/limcars.service /etc/systemd/system/
-sudo nano /etc/systemd/system/limcars.service   # set User= and WorkingDirectory= to your clone path
-sudo systemctl enable --now limcars
+# one-shot installer — writes ~/.config/systemd/user/limcars.service with
+# the right WorkingDirectory, enables + starts it, and turns on linger so
+# the service survives logout:
+bash scripts/install-user-systemd.sh
+
+# any LIMCARS_* vars present at install time are baked into the unit:
+LIMCARS_HOST=0.0.0.0 LIMCARS_TOKEN=my-shared-secret \
+  bash scripts/install-user-systemd.sh
+```
+
+Watch it with `systemctl --user status limcars` or
+`journalctl --user -u limcars -f`.
+
+### systemd (system-wide)
+
+For a shared host, use the templated system unit instead:
+
+```bash
+sudo cp scripts/limcars-next@.service /etc/systemd/system/
+# edit WorkingDirectory / ExecStart to point at your clone (default is /opt/LIMCARS-Lean),
+# then:
+sudo systemctl daemon-reload
+sudo systemctl enable --now limcars-next@<youruser>.service
 ```
 
 Starts at boot ✅ restarts itself on failure ✅ plays nice under load (`Nice=5`) ✅
-Watch it with `systemctl status limcars` or `journalctl -u limcars -f`.
 
 ### cron @reboot (no systemd?)
 
@@ -160,10 +181,6 @@ crontab -e
 # add one line:
 @reboot cd /path/to/LIMCARS-Lean && /usr/bin/python3 -m app >> data/server.log 2>&1
 ```
-
-Want a dry run before installing anything system-wide?
-`bash scripts/boot-test.sh` boots LIMCARS on a scratch port and asserts the
-health endpoint and dashboard answer. 🔍
 
 ## 🧬 Had another dashboard before? Bring your history
 
@@ -186,16 +203,49 @@ how this repo's own history got populated. Every source dashboard
 needs its own mapping pass — but that is precisely the kind of work a coding
 agent does well. 🤖
 
-## 🔐 Security
+## 🔐 Security — secure by default
 
-- 🔒 One shared password (set from the sidebar) guards recipe add/edit/delete
-  and Hermes trace data. Start/Stop, probe and the dashboard stay open for
-  convenience; localhost is exempt.
-- 🧱 Escalating per-IP lockout — 3 wrong tries → 1 min, 6 → 5 min, 9 → 30 min,
-  12 → 2 h. Passwords are stored as salted **scrypt** hashes and compared in
-  constant time.
-- ⚠️ The recipe server executes stored commands — treat the password as your
-  admin boundary, and on shared networks bind `LIMCARS_HOST=127.0.0.1`.
+LIMCARS now ships with a **closed** default surface. Everything that touches
+the shell is behind an explicit opt-in, and anything exposed on the LAN
+requires authentication.
+
+- 🏠 **Binds to `127.0.0.1`** by default. A non-loopback bind
+  (`LIMCARS_HOST=0.0.0.0` or similar) refuses to start unless at least one
+  of a bearer token (`LIMCARS_TOKEN=…`) or an admin password is already
+  configured — the dashboard refuses to open a LAN port into an unprotected
+  install.
+- 🛑 **Command execution is OFF.** Recipes (add/edit/delete/**start/stop**),
+  services start/stop, live-engine kill, and the engine probe are ALL
+  disabled on a fresh install. Flip the master switch when you want them:
+  ```bash
+  export LIMCARS_ALLOW_EXEC=1
+  ```
+  or set `"allow_exec": true` in `data/config.json`. The HTTP `/api/config`
+  endpoint deliberately **cannot** toggle this — a compromised session
+  can't turn the shell back on.
+- 🔑 **Every route requires auth once auth is configured.** Pages redirect
+  to `/login`; API routes return `401`. Three credentials satisfy the gate:
+  * `LIMCARS_TOKEN` as a Bearer header (`X-Limcars-Token: …` or
+    `Authorization: Bearer …`) — ideal for scripts;
+  * an admin password set from the Security panel in the sidebar;
+  * the browser login page at `/login` (HttpOnly, SameSite=Strict cookie —
+    JS can't read it, cross-site POSTs can't ride it).
+- 🧱 **Rate-limited login.** Shared with the recipe-edit gate: 3 wrong tries
+  → 60 s freeze, 6 → 5 min, 9 → 30 min, 12 → 2 h. Passwords are stored as
+  salted **scrypt** hashes and compared with `hmac.compare_digest`.
+- 🗂️ **Hermes trace privacy.** `/subagent-watch/*` now uses the same session
+  cookie as the main dashboard; the old `?pw=` query parameter is gone
+  (it leaked into reverse-proxy logs / referrer headers / browser history).
+- 📁 **File permissions.** `data/` is forced to `0o700` on every boot and
+  `data/auth.json` is written `0o600`; a leaky umask on an older install
+  cannot leave the password hash or the token ledger world-readable.
+- 🛡️ **Origin / CSRF.** A cross-site POST whose `Origin` doesn't match the
+  request Host is refused outright (`403`). `curl` / agent scripts send no
+  Origin and are unaffected.
+- ⚠️ **Running commands is still powerful.** When `allow_exec` is on, every
+  action still prompts for the admin password, confirms destructive
+  operations in the UI, and runs under the service's user — treat it with
+  the trust you'd grant your own shell.
 
 ## 🕊️ Data & privacy
 

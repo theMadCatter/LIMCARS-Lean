@@ -2,6 +2,9 @@ data/*.db*
 data/server.log
 data/config.json
 data/recipe-logs/
+data/recipes.json
+data/settings.json
+data/auth.json
+data/ssh/
 __pycache__/
 .pytest_cache/
-data/auth.json
